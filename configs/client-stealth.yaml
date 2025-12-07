@@ -1,0 +1,22 @@
+server:
+  host: "your-vps-ip"  # Replace with your VPS IP
+  port: 443            # Standard HTTPS port (ultra-stealth)
+  fake_sni: "cdn.cloudflare.com"  # Even more believable SNI
+  use_tls: true
+  log_level: "warn"    # Minimal logging for stealth
+
+tunnel:
+  interface_name: "tun0"  # Standard TUN name
+  local_ip: "10.8.0.2/24"
+  dns_servers:
+    - "1.1.1.1"       # Cloudflare DNS (matches fake SNI)
+    - "1.0.0.1"       # Cloudflare secondary
+  routes:
+    - "0.0.0.0/0"     # Route all traffic
+
+client:
+  id: "web-client"    # Generic client ID
+  reconnect_interval: 30   # Less frequent reconnections
+  heartbeat_interval: 120  # Less frequent heartbeats
+  stealth_mode: true       # Enable stealth features
+  

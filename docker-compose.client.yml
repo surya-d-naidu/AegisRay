@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  aegisray-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: aegisray/client:latest
+    container_name: aegisray-client
+    restart: unless-stopped
+    volumes:
+      - ./configs/client.yaml:/app/configs/client.yaml:ro
+      - aegisray_client_logs:/app/logs
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - SERVER_ADDRESS=${SERVER_ADDRESS:-your-vps-ip:8443}
+    network_mode: host  # Required for TUN interface
+    privileged: true    # Required for TUN interface creation
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
+    healthcheck:
+      test: ["CMD", "ping", "-c", "1", "10.8.0.1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  aegisray_client_logs:
+    driver: local
