@@ -1,0 +1,59 @@
+# AegisRay Mobile Client Mesh Configuration
+
+# Node Configuration
+node_name: "mobile-android"
+mesh_ip: ""                       # Auto-assigned
+listen_port: 51820               # Standard port
+log_level: "error"               # Minimal logging for mobile
+
+# Network Configuration
+network_name: "aegis-mesh"
+network_cidr: "100.64.0.0/16"
+dns_servers:
+  - "1.1.1.1"                   # Fast DNS for mobile
+
+# Security Configuration
+use_tls: true
+cert_file: ""                    # Auto-generated
+key_file: ""
+
+# Mobile Stealth Configuration
+stealth_mode: true
+stealth_domains:
+  - "play.googleapis.com"        # Mobile-friendly domains
+  - "graph.facebook.com"
+  - "api.twitter.com"
+
+# Peer Discovery
+coordinators:
+  - "exit-node-us-west.mesh:443"
+static_peers: []
+auto_discovery: true
+
+# Mobile NAT Traversal
+stun_servers:
+  - "stun:stun.l.google.com:19302"
+turn_servers: []
+upnp_enabled: false              # Not available on mobile
+
+# Mobile Routing
+allowed_ips:
+  - "100.64.0.0/16"             # Only mesh traffic
+excluded_routes:
+  - "192.168.0.0/16"            # Local WiFi
+  - "172.16.0.0/12"             # Local networks
+default_route: true              # Route internet through mesh
+
+# Mobile Performance
+mtu: 1280                        # Conservative MTU for mobile
+keepalive: 60                    # Less frequent for battery
+persistent_keepalive: 120        # Long intervals
+
+# Mobile Client Settings
+exit_node: false
+accept_routes: true              # Accept routes from mesh
+advertise_routes: []             # Don't advertise routes
+
+# Mobile Optimizations
+mesh_routing: true
+load_balancing: false            # Simpler routing for mobile

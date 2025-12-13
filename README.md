@@ -13,57 +13,118 @@
 
 ## 🛡️ Overview
 
-AegisRay is a sophisticated VPN tunnel solution designed to bypass restrictive firewalls and deep packet inspection (DPI) systems. It disguises VPN traffic as legitimate HTTPS traffic using advanced SNI (Server Name Indication) masquerading techniques.
+AegisRay is a sophisticated **mesh VPN network** designed to bypass restrictive firewalls and deep packet inspection (DPI) systems. Unlike traditional hub-and-spoke VPNs, AegisRay creates a **peer-to-peer mesh network** where nodes connect directly to each other, similar to Tailscale but with advanced stealth capabilities.
 
 ### ✨ Key Features
 
-- **🕵️ SNI Masquerading**: Disguises tunnel traffic as connections to popular websites (CloudFlare, Google, etc.)
-- **🔒 End-to-End Encryption**: Military-grade encryption for all tunnel data
-- **🌐 TLS Camouflage**: Uses port 443 (HTTPS) to appear as legitimate web traffic
-- **🚀 High Performance**: Optimized gRPC-based protocol for minimal latency
-- **🐳 Docker Ready**: Easy deployment with Docker Compose
-- **📊 Multi-Mode Support**: Normal, production, and ultra-stealth configurations
-- **🔄 Auto-Reconnection**: Robust connection recovery mechanisms
-- **📡 Multiple Protocols**: HTTP and SOCKS proxy support
+#### 🕸️ **Mesh Network Architecture**
+- **Peer-to-Peer Connections**: Direct connections between nodes without central servers
+- **Automatic Peer Discovery**: Finds and connects to other nodes automatically
+- **NAT Traversal**: Breakthrough firewalls and NATs using STUN/TURN and hole punching
+- **Load Balancing**: Distribute traffic across multiple mesh paths
+- **Self-Healing**: Automatically routes around failed nodes
 
-## 🏗️ Architecture
+#### 🥷 **Advanced Stealth Features**
+- **SNI Masquerading**: Disguises mesh traffic as connections to popular websites (CloudFlare, Google, etc.)
+- **Traffic Camouflage**: All mesh communication looks like legitimate HTTPS browsing
+- **Port Flexibility**: Uses standard ports (443, 80) to blend with normal web traffic
+- **Metadata Obfuscation**: Hides VPN signatures from deep packet inspection
 
+#### 🔒 **Security & Performance**
+- **End-to-End Encryption**: Military-grade encryption for all mesh data
+- **Perfect Forward Secrecy**: Dynamic key rotation and session isolation
+- **Zero Trust Architecture**: Each connection is individually authenticated and encrypted
+- **High Performance**: Optimized protocols with minimal latency overhead
+
+#### 🚀 **Enterprise Ready**
+- **Docker Integration**: Easy deployment with Docker Compose
+- **Multi-Mode Support**: Client nodes, exit nodes, and coordinators
+- **Auto-Reconnection**: Robust connection recovery and failover
+- **Cross-Platform**: Linux, Windows, macOS, iOS, Android support
+
+## 🏗️ Mesh Network Architecture
+
+### Traditional VPN vs AegisRay Mesh
+
+**Traditional Hub-and-Spoke VPN:**
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Client App    │───▶│  AegisRay VPN   │───▶│  Target Server  │
-│                 │    │    Tunnel       │    │                 │
-│  (Your Device)  │    │ (VPS/Cloud)     │    │  (Internet)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │  Fake SNI:      │
-                       │  cloudflare.com │
-                       │  google.com     │
-                       │  microsoft.com  │
-                       └─────────────────┘
+Client A ──► VPN Server ◄── Client B
+Client C ──► VPN Server ◄── Client D
+     (Single point of failure)
+```
+
+**AegisRay Mesh Network:**
+```
+    Exit Node ◄──────────────┐
+        │                    │
+        │    ┌─────────────────────┐
+        ▼    │                     │
+   📱Mobile ◄┼─► 💻Laptop ◄───► 🖥️Desktop
+        │    │     │              │
+        │    │     │         🖧 Server
+        │    │     │              │
+        └────┼─────┼──► 📟IoT ◄────┘
+             │     │
+        🏢 Office ◄┘
+        
+   (Self-healing P2P mesh with multiple paths)
+```
+
+### Stealth Layer Architecture
+```
+┌─────────────────────────────────────────────┐
+│            Internet Traffic                  │
+│  ┌─────────────────────────────────────┐   │
+│  │        Fake HTTPS Traffic            │   │
+│  │  SNI: cloudflare.com                │   │
+│  │  Port: 443 (HTTPS)                  │   │
+│  │  Headers: Normal browser headers     │   │
+│  │                                     │   │
+│  │  ┌─────────────────────────────┐   │   │
+│  │  │     Encrypted Mesh Data      │   │   │
+│  │  │   ┌─────────────────────┐   │   │   │
+│  │  │   │   VPN Tunnel Data    │   │   │   │
+│  │  │   └─────────────────────┘   │   │   │
+│  │  └─────────────────────────────┘   │   │
+│  └─────────────────────────────────────┘   │
+└─────────────────────────────────────────────┘
 ```
 
 ### 🔧 Core Components
 
-- **🖥️ Server**: gRPC tunnel server with TLS termination
-- **📱 Client**: TUN interface client with traffic encryption
-- **🔑 Certificate Manager**: Automatic TLS certificate generation
-- **🎭 SNI Faker**: Dynamic fake SNI generation
-- **🔐 Crypto Engine**: RSA/AES hybrid encryption
-- **🌐 Proxy Services**: HTTP/SOCKS proxy servers
+#### �️ **Mesh Network Layer**
+- **Mesh Node**: Core P2P networking with peer discovery and routing
+- **NAT Traversal**: STUN/TURN client with UDP hole punching
+- **Coordinator**: Peer discovery and mesh coordination service
+- **Route Manager**: Intelligent routing and load balancing
+
+#### 🥷 **Stealth Layer** 
+- **SNI Faker**: Dynamic fake SNI generation for traffic masquerading
+- **Certificate Manager**: Automatic TLS certificate generation and rotation
+- **Traffic Camouflage**: Makes VPN traffic look like normal HTTPS browsing
+- **DPI Evasion**: Advanced techniques to bypass deep packet inspection
+
+#### 🔐 **Security Layer**
+- **Crypto Engine**: RSA/AES hybrid encryption with perfect forward secrecy
+- **Key Management**: Automatic key rotation and peer authentication
+- **Zero Trust**: Every connection independently authenticated and encrypted
+
+#### 🌐 **Network Layer**
+- **TUN Interface**: Layer 3 VPN with full IP routing
+- **Mesh Routing**: Intelligent multi-path routing across the mesh
+- **Exit Nodes**: Internet gateway nodes for mesh clients
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Go 1.21+
-- Docker & Docker Compose
+- Go 1.21+ or Docker
 - Root privileges (for TUN interface)
-- A VPS with public IP
+- Linux/macOS/Windows
 
-### 1. Clone & Build
+### 🕸️ Option 1: Mesh Network (Recommended)
 
+#### 1. Clone & Build
 ```bash
 git clone https://github.com/surya-d-naidu/AegisRay.git
 cd AegisRay
@@ -71,20 +132,47 @@ make setup
 make build
 ```
 
-### 2. Deploy Server (VPS)
+#### 2. Deploy Exit Node (VPS)
+```bash
+# Deploy complete mesh infrastructure
+docker-compose -f docker-compose.mesh.yml up -d
 
+# Or deploy single exit node
+sudo ./bin/aegisray-mesh -config=configs/mesh-exit-node.yaml -exit-node
+```
+
+#### 3. Join Mesh Network (Client)
+```bash
+# Copy and edit mesh config
+cp configs/mesh.example.yaml configs/mesh.yaml
+# Edit: Set coordinators to your exit node IPs
+
+# Join the mesh
+sudo ./bin/aegisray-mesh -config=configs/mesh.yaml
+```
+
+#### 4. Mobile/Desktop Clients
+```bash
+# Mobile-optimized config
+sudo ./bin/aegisray-mesh -config=configs/mesh-mobile.yaml
+
+# Desktop config with more features
+sudo ./bin/aegisray-mesh -config=configs/mesh.yaml
+```
+
+### 🏢 Option 2: Traditional VPN (Legacy)
+
+#### 1. Deploy Server (VPS)
 ```bash
 # Quick VPS deployment
 ./deploy.sh
 
-# Or manual Docker deployment
+# Or manual deployment
 docker-compose -f docker-compose.prod.yml up -d
 ```
 
-### 3. Configure Client
-
+#### 2. Configure Client
 Edit `configs/client.yaml`:
-
 ```yaml
 server:
   host: "YOUR_VPS_IP"           # Replace with your VPS IP
@@ -100,8 +188,7 @@ tunnel:
     - "1.1.1.1"
 ```
 
-### 4. Start Client
-
+#### 3. Start Client
 ```bash
 sudo ./bin/aegisray-client -config=configs/client.yaml
 ```

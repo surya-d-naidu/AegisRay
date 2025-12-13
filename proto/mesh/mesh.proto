@@ -1,0 +1,289 @@
+syntax = "proto3";
+
+package aegisray.mesh;
+
+option go_package = "github.com/aegisray/vpn-tunnel/proto/mesh";
+
+import "google/protobuf/timestamp.proto";
+
+// MeshService handles mesh network operations
+service MeshService {
+    // Peer management
+    rpc JoinNetwork(JoinRequest) returns (JoinResponse);
+    rpc LeaveNetwork(LeaveRequest) returns (LeaveResponse);
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+    
+    // Peer discovery
+    rpc DiscoverPeers(DiscoveryRequest) returns (DiscoveryResponse);
+    rpc RequestIntroduction(IntroductionRequest) returns (IntroductionResponse);
+    
+    // Data transmission
+    rpc SendPacket(PacketRequest) returns (PacketResponse);
+    rpc StreamPackets(stream StreamPacket) returns (stream StreamPacket);
+    
+    // Route management
+    rpc AdvertiseRoutes(RouteAdvertisement) returns (RouteResponse);
+    rpc RequestRoutes(RouteRequest) returns (RouteResponse);
+    
+    // NAT traversal
+    rpc InitiateHolePunch(HolePunchRequest) returns (HolePunchResponse);
+    rpc ExchangeConnectionInfo(ConnectionInfoRequest) returns (ConnectionInfoResponse);
+}
+
+// Network join/leave messages
+message JoinRequest {
+    string node_id = 1;
+    string public_key = 2;
+    string mesh_ip = 3;
+    repeated string allowed_ips = 4;
+    ConnectionInfo connection_info = 5;
+    google.protobuf.Timestamp timestamp = 6;
+    string network_name = 7;
+    string signature = 8; // Cryptographic signature
+}
+
+message JoinResponse {
+    bool success = 1;
+    string assigned_ip = 2;
+    repeated PeerInfo peers = 3;
+    NetworkInfo network_info = 4;
+    string error = 5;
+}
+
+message LeaveRequest {
+    string node_id = 1;
+    string reason = 2;
+    google.protobuf.Timestamp timestamp = 3;
+    string signature = 4;
+}
+
+message LeaveResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// Heartbeat messages
+message HeartbeatRequest {
+    string node_id = 1;
+    NodeStatus status = 2;
+    google.protobuf.Timestamp timestamp = 3;
+}
+
+message HeartbeatResponse {
+    bool alive = 1;
+    repeated PeerUpdate peer_updates = 2;
+    repeated RouteUpdate route_updates = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+// Peer discovery messages
+message DiscoveryRequest {
+    string node_id = 1;
+    string network_name = 2;
+    int32 max_peers = 3;
+    repeated string preferred_regions = 4;
+}
+
+message DiscoveryResponse {
+    repeated PeerInfo peers = 1;
+    NetworkInfo network_info = 2;
+    int32 total_peers = 3;
+}
+
+message IntroductionRequest {
+    string requester_id = 1;
+    string target_id = 2;
+    string message = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+message IntroductionResponse {
+    bool success = 1;
+    ConnectionInfo target_connection = 2;
+    string session_token = 3;
+    int64 expires_at = 4;
+}
+
+// Data transmission messages
+message PacketRequest {
+    string session_id = 1;
+    string source_id = 2;
+    string dest_id = 3;
+    bytes encrypted_data = 4;
+    PacketType packet_type = 5;
+    uint32 packet_id = 6;
+    google.protobuf.Timestamp timestamp = 7;
+    PacketMetadata metadata = 8;
+}
+
+message PacketResponse {
+    bool success = 1;
+    uint32 packet_id = 2;
+    bytes response_data = 3;
+    google.protobuf.Timestamp timestamp = 4;
+    string error = 5;
+}
+
+message StreamPacket {
+    string session_id = 1;
+    bytes data = 2;
+    uint32 sequence = 3;
+    bool is_control = 4;
+    PacketMetadata metadata = 5;
+}
+
+// Route management messages
+message RouteAdvertisement {
+    string node_id = 1;
+    repeated Route routes = 2;
+    uint32 sequence_number = 3;
+    google.protobuf.Timestamp timestamp = 4;
+    string signature = 5;
+}
+
+message RouteRequest {
+    string node_id = 1;
+    repeated string destinations = 2;
+}
+
+message RouteResponse {
+    bool success = 1;
+    repeated Route routes = 2;
+    string error = 3;
+}
+
+// NAT traversal messages
+message HolePunchRequest {
+    string requester_id = 1;
+    string target_id = 2;
+    ConnectionInfo requester_info = 3;
+    string session_token = 4;
+}
+
+message HolePunchResponse {
+    bool success = 1;
+    ConnectionInfo target_info = 2;
+    repeated string punch_addresses = 3;
+    int32 punch_port = 4;
+}
+
+message ConnectionInfoRequest {
+    string node_id = 1;
+    ConnectionInfo local_info = 2;
+}
+
+message ConnectionInfoResponse {
+    ConnectionInfo public_info = 3;
+    NATType nat_type = 4;
+    repeated string stun_servers = 5;
+}
+
+// Data structures
+message PeerInfo {
+    string id = 1;
+    string public_key = 2;
+    string mesh_ip = 3;
+    repeated string allowed_ips = 4;
+    ConnectionInfo connection_info = 5;
+    google.protobuf.Timestamp last_seen = 6;
+    NodeStatus status = 7;
+    string region = 8;
+}
+
+message ConnectionInfo {
+    string public_address = 1;
+    string local_address = 2;
+    int32 port = 3;
+    NATType nat_type = 4;
+    repeated string stun_results = 5;
+}
+
+message NetworkInfo {
+    string name = 1;
+    string cidr = 2;
+    repeated string dns_servers = 3;
+    int32 total_nodes = 4;
+    string version = 5;
+}
+
+message NodeStatus {
+    int32 peer_count = 1;
+    double cpu_usage = 2;
+    double memory_usage = 3;
+    int64 bytes_sent = 4;
+    int64 bytes_received = 5;
+    int64 uptime_seconds = 6;
+    string version = 7;
+    repeated string capabilities = 8;
+}
+
+message PeerUpdate {
+    PeerUpdateType type = 1;
+    PeerInfo peer = 2;
+    string reason = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+message RouteUpdate {
+    RouteUpdateType type = 1;
+    Route route = 2;
+    string advertiser = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+message Route {
+    string destination = 1;
+    string next_hop = 2;
+    int32 metric = 3;
+    google.protobuf.Timestamp expires_at = 4;
+    RouteType route_type = 5;
+}
+
+message PacketMetadata {
+    int32 ttl = 1;
+    string source_region = 2;
+    string dest_region = 3;
+    repeated string path = 4; // Nodes the packet has traversed
+    bool fragmented = 5;
+    int32 fragment_id = 6;
+}
+
+// Enums
+enum PacketType {
+    DATA = 0;
+    CONTROL = 1;
+    HEARTBEAT = 2;
+    KEY_EXCHANGE = 3;
+    ROUTE_ADVERTISEMENT = 4;
+    NAT_TRAVERSAL = 5;
+}
+
+enum PeerUpdateType {
+    PEER_JOINED = 0;
+    PEER_LEFT = 1;
+    PEER_UPDATED = 2;
+    PEER_CONNECTED = 3;
+    PEER_DISCONNECTED = 4;
+}
+
+enum RouteUpdateType {
+    ROUTE_ADDED = 0;
+    ROUTE_REMOVED = 1;
+    ROUTE_UPDATED = 2;
+}
+
+enum RouteType {
+    DIRECT = 0;
+    SUBNET = 1;
+    EXIT_NODE = 2;
+    ADVERTISED = 3;
+}
+
+enum NATType {
+    UNKNOWN = 0;
+    NONE = 1;          // Direct connection possible
+    FULL_CONE = 2;     // Easy traversal
+    RESTRICTED_CONE = 3; // Moderate traversal
+    PORT_RESTRICTED = 4; // Hard traversal  
+    SYMMETRIC = 5;      // Very hard traversal
+}

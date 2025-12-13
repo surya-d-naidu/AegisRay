@@ -1,0 +1,166 @@
+version: '3.8'
+
+# AegisRay Mesh Network - Complete Deployment
+# Includes exit nodes, coordinators, and client examples
+
+services:
+  # Primary Exit Node (US West)
+  aegis-exit-us-west:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh:latest
+    container_name: aegis-exit-us-west
+    restart: unless-stopped
+    privileged: true              # Required for TUN interface
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - "443:443/tcp"            # HTTPS/gRPC (stealth)
+      - "51820:51820/udp"        # Mesh communication
+      - "8080:8080/tcp"          # Status/API
+    volumes:
+      - ./configs/mesh-exit-node.yaml:/app/configs/mesh.yaml:ro
+      - aegis_certs:/app/certs
+      - aegis_logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AEGIS_ROLE=exit-node
+      - AEGIS_REGION=us-west
+      - AEGIS_STEALTH=true
+    networks:
+      - aegis-mesh
+    command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml", "-exit-node"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Secondary Exit Node (EU)
+  aegis-exit-eu:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh:latest
+    container_name: aegis-exit-eu
+    restart: unless-stopped
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - "444:443/tcp"            # Alternative HTTPS port
+      - "51821:51820/udp"
+    volumes:
+      - ./configs/mesh-exit-node.yaml:/app/configs/mesh.yaml:ro
+      - aegis_certs_eu:/app/certs
+      - aegis_logs_eu:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AEGIS_ROLE=exit-node
+      - AEGIS_REGION=eu-west
+      - AEGIS_STEALTH=true
+    networks:
+      - aegis-mesh
+    command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml", "-exit-node"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Mesh Coordinator/Discovery Service
+  aegis-coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    image: aegisray/coordinator:latest
+    container_name: aegis-coordinator
+    restart: unless-stopped
+    ports:
+      - "8443:8443/tcp"          # Coordination API
+    volumes:
+      - coordinator_db:/app/data
+      - ./configs/coordinator.yaml:/app/configs/coordinator.yaml:ro
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - DB_PATH=/app/data/coordinator.db
+    networks:
+      - aegis-mesh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Example Mesh Client (for testing)
+  aegis-client-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh:latest
+    container_name: aegis-client-test
+    restart: unless-stopped
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./configs/mesh.example.yaml:/app/configs/mesh.yaml:ro
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - LOG_LEVEL=debug
+      - AEGIS_ROLE=client
+    networks:
+      - aegis-mesh
+    depends_on:
+      - aegis-exit-us-west
+      - aegis-coordinator
+    command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml"]
+
+  # Monitoring & Status Dashboard
+  aegis-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: aegisray/dashboard:latest
+    container_name: aegis-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000/tcp"          # Web dashboard
+    environment:
+      - MESH_API=http://aegis-exit-us-west:8080
+      - COORDINATOR_API=http://aegis-coordinator:8443
+    networks:
+      - aegis-mesh
+    depends_on:
+      - aegis-exit-us-west
+      - aegis-coordinator
+
+volumes:
+  aegis_certs:
+    driver: local
+  aegis_certs_eu:
+    driver: local
+  aegis_logs:
+    driver: local
+  aegis_logs_eu:
+    driver: local
+  coordinator_db:
+    driver: local
+
+networks:
+  aegis-mesh:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

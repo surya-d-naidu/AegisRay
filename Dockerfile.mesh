@@ -1,0 +1,59 @@
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git protobuf protobuf-dev
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Generate protobuf files
+RUN protoc --go_out=. --go_opt=paths=source_relative \
+    --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+    proto/mesh/mesh.proto proto/tunnel/tunnel.proto
+
+# Build mesh binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o aegisray-mesh cmd/mesh/main.go
+
+# Final stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    iptables \
+    wireguard-tools \
+    curl \
+    ca-certificates
+
+# Create app user
+RUN addgroup -g 1001 aegis && \
+    adduser -D -s /bin/sh -u 1001 -G aegis aegis
+
+# Create directories
+RUN mkdir -p /app/configs /app/certs /app/logs && \
+    chown -R aegis:aegis /app
+
+# Copy binary from builder
+COPY --from=builder /app/aegisray-mesh /app/
+COPY --chown=aegis:aegis configs/ /app/configs/
+
+# Set permissions
+RUN chmod +x /app/aegisray-mesh
+
+# Switch to app user (will be overridden for privileged operations)
+USER aegis
+
+WORKDIR /app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Default command
+CMD ["./aegisray-mesh", "-config=/app/configs/mesh.yaml"]
