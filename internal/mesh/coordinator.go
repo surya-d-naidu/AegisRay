@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,7 +61,7 @@ type CoordinatorInfo struct {
 func NewCoordinator(node *MeshNode, coordinators []string) *Coordinator {
 	return &Coordinator{
 		node:         node,
-		logger:       node.logger.WithField("component", "coordinator"),
+		logger:       node.logger,
 		coordinators: coordinators,
 		knownPeers:   make(map[string]*DiscoveredPeer),
 		stopCh:       make(chan struct{}),
@@ -293,7 +294,7 @@ func (c *Coordinator) sendHTTPRequest(method, path string, data interface{}) err
 	} else {
 		// POST requests with JSON body
 		jsonData, _ := json.Marshal(data)
-		req, err = http.NewRequest(method, url, nil)
+		req, err = http.NewRequest(method, url, strings.NewReader(string(jsonData)))
 		req.Header.Set("Content-Type", "application/json")
 	}
 

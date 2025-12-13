@@ -49,18 +49,12 @@ type PeerConnection struct {
 }
 
 // NewNATTraversal creates a new NAT traversal manager
-func NewNATTraversal(node *MeshNode) *NATTraversal {
+func NewNATTraversal(node *MeshNode, stunServers []string, turnServers []string) *NATTraversal {
 	return &NATTraversal{
-		node:   node,
-		logger: node.logger.WithField("component", "nat-traversal"),
-		stunServers: []string{
-			"stun:stun.l.google.com:19302",
-			"stun:stun1.l.google.com:19302",
-			"stun:stun.cloudflare.com:3478",
-		},
-		turnServers: []string{
-			// Add TURN servers if available
-		},
+		node:        node,
+		logger:      node.logger,
+		stunServers: stunServers,
+		turnServers: turnServers,
 		connections: make(map[string]*PeerConnection),
 		stopCh:      make(chan struct{}),
 	}
@@ -191,10 +185,21 @@ func (nt *NATTraversal) discoverNetworkConfig() error {
 
 	nt.localAddr = conn.LocalAddr().(*net.UDPAddr)
 
+	// Check if we have STUN servers configured
+	if len(nt.stunServers) == 0 {
+		// Simulation mode - use local address as public address
+		nt.logger.Info("Running in simulation mode, using local address as public address")
+		nt.publicAddr = nt.localAddr
+		return nil
+	}
+
 	// Use STUN to discover public address
 	publicAddr, err := nt.stunDiscovery()
 	if err != nil {
-		return fmt.Errorf("STUN discovery failed: %w", err)
+		// Fall back to local address for simulation
+		nt.logger.WithError(err).Warn("STUN discovery failed, using local address as fallback")
+		nt.publicAddr = nt.localAddr
+		return nil
 	}
 
 	nt.publicAddr = publicAddr

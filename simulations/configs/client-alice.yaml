@@ -15,8 +15,8 @@ dns_servers:
 
 # Security Configuration
 use_tls: true
-cert_file: ""
-key_file: ""
+cert_file: "/app/certs/server.crt"
+key_file: "/app/certs/server.key"
 
 # Stealth Configuration
 stealth_mode: true
@@ -25,12 +25,12 @@ stealth_domains:
   - "stackoverflow.com"
   - "google.com"
 
-# Peer Discovery
-coordinators:
-  - "172.30.1.10:8443"            # US coordinator
-  - "172.30.1.11:8443"            # EU coordinator
+# P2P Discovery (replaces coordinators)
+coordinators: []                    # Not used in P2P mode
 auto_discovery: true
-static_peers: []
+static_peers:
+  - "172.30.1.10:443"             # US exit node
+  - "172.30.1.11:443"             # EU exit node
 
 # NAT Traversal
 stun_servers:

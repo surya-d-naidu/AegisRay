@@ -15,8 +15,8 @@ dns_servers:
 
 # Security Configuration
 use_tls: true
-cert_file: ""
-key_file: ""
+cert_file: "/app/certs/server.crt"
+key_file: "/app/certs/server.key"
 
 # Stealth Configuration
 stealth_mode: true
@@ -26,19 +26,17 @@ stealth_domains:
   - "microsoft.com"
   - "azure.com"
 
-# Coordinator Configuration (secondary coordinator)
-coordinators:
-  - "172.30.1.10:8443"            # Primary coordinator (US)
-  - "172.30.1.11:8443"            # Self-reference
+# P2P Discovery Configuration
+coordinators: []                    # Not used in P2P mode
 auto_discovery: true
 static_peers:
-  - "172.30.1.10:443"             # Static peer to US exit node
+  - "172.30.1.10:443"             # Direct P2P connection to US exit node
 
-# NAT Traversal
-stun_servers:
-  - "stun:stun.l.google.com:19302"
+# NAT Traversal (Simulation mode)
+stun_servers: []                    # Disabled for simulation
 turn_servers: []
 upnp_enabled: false
+simulation_mode: true
 
 # Exit Node Routing
 allowed_ips:

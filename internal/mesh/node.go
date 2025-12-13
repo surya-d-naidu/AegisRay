@@ -1,7 +1,10 @@
 package mesh
 
 import (
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -16,10 +19,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // MeshNode represents a node in the AegisRay mesh network
 type MeshNode struct {
+	pb.UnimplementedMeshServiceServer
+
 	// Node Identity
 	ID         string
 	PublicKey  string
@@ -35,7 +41,8 @@ type MeshNode struct {
 
 	// Services
 	grpcServer   *grpc.Server
-	coordinator  *Coordinator
+	p2pDiscovery *P2PDiscovery
+	meshRouter   *MeshRouter
 	natTraversal *NATTraversal
 	sniFaker     *sni.SNIFaker
 	encryption   *crypto.EncryptionManager
@@ -94,6 +101,7 @@ type MeshPacket struct {
 	Payload    []byte
 	Encrypted  bool
 	Timestamp  time.Time
+	Metadata   *pb.PacketMetadata
 }
 
 // PeerUpdateType represents types of peer updates
@@ -156,15 +164,26 @@ func NewMeshNode(cfg *config.MeshConfig) (*MeshNode, error) {
 		logger.SetLevel(level)
 	}
 
-	// Parse mesh IP
-	meshIP := net.ParseIP(cfg.MeshIP)
-	if meshIP == nil {
-		return nil, fmt.Errorf("invalid mesh IP: %s", cfg.MeshIP)
+	// Parse mesh IP (auto-assign if empty for clients)
+	var meshIP net.IP
+	if cfg.MeshIP == "" {
+		// Auto-assign IP for clients from network CIDR
+		logger.Info("Auto-assigning mesh IP for client node")
+		autoIP, err := autoAssignMeshIP(cfg.NetworkCIDR, nodeID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to auto-assign mesh IP: %w", err)
+		}
+		meshIP = autoIP
+	} else {
+		meshIP = net.ParseIP(cfg.MeshIP)
+		if meshIP == nil {
+			return nil, fmt.Errorf("invalid mesh IP: %s", cfg.MeshIP)
+		}
 	}
 
 	node := &MeshNode{
 		ID:          nodeID,
-		PublicKey:   publicKey,
+		PublicKey:   string(publicKey),
 		MeshIP:      meshIP,
 		ListenPort:  cfg.ListenPort,
 		peers:       make(map[string]*Peer),
@@ -179,16 +198,25 @@ func NewMeshNode(cfg *config.MeshConfig) (*MeshNode, error) {
 	// Initialize SNI faker for stealth
 	node.sniFaker = sni.NewSNIFaker(cfg.StealthDomains...)
 
-	// Initialize certificate manager
+	// Initialize certificate manager and load/generate certificate
 	if cfg.UseTLS {
 		node.certMgr = certs.NewCertificateManager(cfg.CertFile, cfg.KeyFile)
+
+		// Load or generate certificate
+		hosts := []string{"localhost", "127.0.0.1", meshIP.String()}
+		if _, err := node.certMgr.LoadOrGenerateCertificate(hosts); err != nil {
+			return nil, fmt.Errorf("failed to setup certificate: %w", err)
+		}
 	}
 
 	// Initialize NAT traversal
-	node.natTraversal = NewNATTraversal(node)
+	node.natTraversal = NewNATTraversal(node, cfg.STUNServers, cfg.TURNServers)
 
-	// Initialize coordinator (handles peer discovery and coordination)
-	node.coordinator = NewCoordinator(node, cfg.Coordinators)
+	// Initialize P2P discovery (replaces centralized coordinator)
+	node.p2pDiscovery = NewP2PDiscovery(node, cfg.StaticPeers)
+
+	// Initialize mesh router for traffic routing
+	node.meshRouter = NewMeshRouter(node)
 
 	return node, nil
 }
@@ -213,9 +241,14 @@ func (n *MeshNode) Start() error {
 		return fmt.Errorf("failed to start NAT traversal: %w", err)
 	}
 
-	// Connect to coordinators for initial peer discovery
-	if err := n.coordinator.Start(); err != nil {
-		return fmt.Errorf("failed to start coordinator: %w", err)
+	// Start P2P discovery for peer-to-peer mesh networking
+	if err := n.p2pDiscovery.Start(); err != nil {
+		return fmt.Errorf("failed to start P2P discovery: %w", err)
+	}
+
+	// Start mesh router for traffic routing
+	if err := n.meshRouter.Start(); err != nil {
+		return fmt.Errorf("failed to start mesh router: %w", err)
 	}
 
 	// Start background routines
@@ -241,8 +274,8 @@ func (n *MeshNode) Stop() error {
 	close(n.stopCh)
 
 	// Stop services
-	if n.coordinator != nil {
-		n.coordinator.Stop()
+	if n.p2pDiscovery != nil {
+		n.p2pDiscovery.Stop()
 	}
 
 	if n.natTraversal != nil {
@@ -319,8 +352,8 @@ func (n *MeshNode) RemovePeer(peerID string) error {
 	return nil
 }
 
-// SendPacket sends a packet through the mesh
-func (n *MeshNode) SendPacket(destIP net.IP, packet []byte) error {
+// SendMeshPacket sends a packet through the mesh
+func (n *MeshNode) SendMeshPacket(destIP net.IP, packet []byte) error {
 	// Find peer by mesh IP
 	var targetPeer *Peer
 
@@ -585,6 +618,52 @@ func generateNodeID() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
+// autoAssignMeshIP generates a unique IP address within the given CIDR for a node
+func autoAssignMeshIP(networkCIDR, nodeID string) (net.IP, error) {
+	_, network, err := net.ParseCIDR(networkCIDR)
+	if err != nil {
+		return nil, fmt.Errorf("invalid network CIDR: %w", err)
+	}
+
+	// Use SHA256 hash of nodeID to generate deterministic but random IP
+	hash := sha256.Sum256([]byte(nodeID))
+
+	// Convert first 4 bytes of hash to IP offset
+	offset := binary.BigEndian.Uint32(hash[:4])
+
+	// Get the network address and mask size
+	networkAddr := network.IP.To4()
+	if networkAddr == nil {
+		return nil, fmt.Errorf("only IPv4 networks supported")
+	}
+
+	ones, bits := network.Mask.Size()
+	if bits != 32 {
+		return nil, fmt.Errorf("invalid IPv4 mask")
+	}
+
+	// Calculate available host addresses
+	hostBits := uint32(32 - ones)
+	maxHosts := uint32(1<<hostBits) - 2 // Exclude network and broadcast
+
+	if maxHosts == 0 {
+		return nil, fmt.Errorf("network too small for host assignment")
+	}
+
+	// Generate host part (avoid .0 and .1 which are typically reserved)
+	hostPart := (offset % maxHosts) + 2
+	if hostPart >= maxHosts {
+		hostPart = 2
+	}
+
+	// Combine network and host parts
+	networkInt := binary.BigEndian.Uint32(networkAddr)
+	assignedIP := make(net.IP, 4)
+	binary.BigEndian.PutUint32(assignedIP, networkInt+hostPart)
+
+	return assignedIP, nil
+}
+
 // Data structures for external interfaces
 
 type PeerInfo struct {
@@ -601,4 +680,270 @@ type NodeInfo struct {
 	MeshIP     string
 	ListenPort int
 	PeerCount  int
+}
+
+// gRPC Service Implementation
+
+func (n *MeshNode) JoinNetwork(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
+	n.logger.WithFields(logrus.Fields{
+		"peer_id":      req.NodeId,
+		"peer_mesh_ip": req.MeshIp,
+		"network":      req.NetworkName,
+	}).Info("Processing peer join request")
+
+	// Validate network name
+	if req.NetworkName != n.config.NetworkName {
+		return &pb.JoinResponse{
+			Success: false,
+			Error:   fmt.Sprintf("network mismatch: expected %s, got %s", n.config.NetworkName, req.NetworkName),
+		}, nil
+	}
+
+	// Add peer to our peer list
+	peer := &Peer{
+		ID:        req.NodeId,
+		PublicKey: req.PublicKey,
+		MeshIP:    net.ParseIP(req.MeshIp),
+		AllowedIPs: []*net.IPNet{
+			{IP: net.ParseIP(req.MeshIp), Mask: net.CIDRMask(32, 32)},
+		},
+		Connected:     true,
+		LastSeen:      time.Now(),
+		LastHandshake: time.Now(),
+	}
+
+	n.peersMu.Lock()
+	n.peers[req.NodeId] = peer
+	n.peersMu.Unlock()
+
+	// Build peer list response (our current peers)
+	var peerList []*pb.PeerInfo
+	n.peersMu.RLock()
+	for _, p := range n.peers {
+		if p.ID == req.NodeId {
+			continue // Don't include the requesting peer
+		}
+		peerInfo := &pb.PeerInfo{
+			Id:         p.ID,
+			PublicKey:  p.PublicKey,
+			MeshIp:     p.MeshIP.String(),
+			AllowedIps: []string{p.MeshIP.String() + "/32"},
+			LastSeen:   timestamppb.New(p.LastSeen),
+			ConnectionInfo: &pb.ConnectionInfo{
+				PublicAddress: fmt.Sprintf("%s:%d", p.MeshIP.String(), n.ListenPort),
+				Port:          int32(n.ListenPort),
+				NatType:       pb.NATType_UNKNOWN,
+			},
+			Status: &pb.NodeStatus{
+				PeerCount:    int32(len(n.peers)),
+				Capabilities: []string{"p2p", "mesh-routing"},
+				Version:      "1.0.0",
+			},
+		}
+		peerList = append(peerList, peerInfo)
+	}
+	n.peersMu.RUnlock()
+
+	// Network info
+	networkInfo := &pb.NetworkInfo{
+		Name:       n.config.NetworkName,
+		Cidr:       n.config.NetworkCIDR,
+		DnsServers: n.config.DNSServers,
+		TotalNodes: int32(len(n.peers) + 1),
+		Version:    "1.0.0",
+	}
+
+	n.logger.WithField("peer_count", len(peerList)).Info("Peer joined mesh network")
+
+	return &pb.JoinResponse{
+		Success:     true,
+		AssignedIp:  req.MeshIp, // In P2P mesh, peers choose their own IPs
+		Peers:       peerList,
+		NetworkInfo: networkInfo,
+	}, nil
+}
+
+func (n *MeshNode) LeaveNetwork(ctx context.Context, req *pb.LeaveRequest) (*pb.LeaveResponse, error) {
+	// TODO: Implement network leave logic
+	return &pb.LeaveResponse{
+		Success: true,
+	}, nil
+}
+
+func (n *MeshNode) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+	n.logger.WithField("peer_id", req.NodeId).Debug("Received heartbeat")
+
+	// Update peer's last seen time
+	n.peersMu.Lock()
+	if peer, exists := n.peers[req.NodeId]; exists {
+		peer.LastSeen = time.Now()
+		peer.Connected = true
+	}
+	n.peersMu.Unlock()
+
+	return &pb.HeartbeatResponse{
+		Alive:     true,
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+func (n *MeshNode) DiscoverPeers(ctx context.Context, req *pb.DiscoveryRequest) (*pb.DiscoveryResponse, error) {
+	n.logger.WithField("requester", req.NodeId).Debug("Processing peer discovery request")
+
+	// Build peer list
+	var peerList []*pb.PeerInfo
+	n.peersMu.RLock()
+	count := 0
+	maxPeers := int(req.MaxPeers)
+	if maxPeers <= 0 {
+		maxPeers = 50 // Default limit
+	}
+
+	for _, p := range n.peers {
+		if count >= maxPeers {
+			break
+		}
+		if p.ID == req.NodeId {
+			continue // Don't include the requesting peer
+		}
+
+		peerInfo := &pb.PeerInfo{
+			Id:         p.ID,
+			PublicKey:  p.PublicKey,
+			MeshIp:     p.MeshIP.String(),
+			AllowedIps: []string{p.MeshIP.String() + "/32"},
+			LastSeen:   timestamppb.New(p.LastSeen),
+			ConnectionInfo: &pb.ConnectionInfo{
+				PublicAddress: fmt.Sprintf("%s:%d", p.MeshIP.String(), n.ListenPort),
+				Port:          int32(n.ListenPort),
+				NatType:       pb.NATType_UNKNOWN,
+			},
+			Status: &pb.NodeStatus{
+				PeerCount:    int32(len(n.peers)),
+				Capabilities: []string{"p2p", "mesh-routing"},
+				Version:      "1.0.0",
+			},
+		}
+		peerList = append(peerList, peerInfo)
+		count++
+	}
+	n.peersMu.RUnlock()
+
+	// Include ourselves in the peer list
+	selfPeer := &pb.PeerInfo{
+		Id:         n.ID,
+		PublicKey:  n.PublicKey,
+		MeshIp:     n.MeshIP.String(),
+		AllowedIps: []string{n.MeshIP.String() + "/32"},
+		LastSeen:   timestamppb.Now(),
+		ConnectionInfo: &pb.ConnectionInfo{
+			PublicAddress: fmt.Sprintf("%s:%d", n.MeshIP.String(), n.ListenPort),
+			Port:          int32(n.ListenPort),
+			NatType:       pb.NATType_UNKNOWN,
+		},
+		Status: &pb.NodeStatus{
+			PeerCount:    int32(len(n.peers)),
+			Capabilities: []string{"p2p", "mesh-routing"},
+			Version:      "1.0.0",
+		},
+	}
+	peerList = append(peerList, selfPeer)
+
+	networkInfo := &pb.NetworkInfo{
+		Name:       n.config.NetworkName,
+		Cidr:       n.config.NetworkCIDR,
+		DnsServers: n.config.DNSServers,
+		TotalNodes: int32(len(n.peers) + 1),
+		Version:    "1.0.0",
+	}
+
+	return &pb.DiscoveryResponse{
+		Peers:       peerList,
+		NetworkInfo: networkInfo,
+		TotalPeers:  int32(len(peerList)),
+	}, nil
+}
+
+func (n *MeshNode) RequestIntroduction(ctx context.Context, req *pb.IntroductionRequest) (*pb.IntroductionResponse, error) {
+	// TODO: Implement peer introduction logic
+	return &pb.IntroductionResponse{
+		Success: true,
+	}, nil
+}
+
+func (n *MeshNode) SendPacket(ctx context.Context, req *pb.PacketRequest) (*pb.PacketResponse, error) {
+	n.logger.WithFields(logrus.Fields{
+		"source": req.SourceId,
+		"dest":   req.DestId,
+		"type":   req.PacketType,
+	}).Debug("Received packet for routing")
+
+	// Create mesh packet
+	meshPacket := &MeshPacket{
+		SourceID:   req.SourceId,
+		DestID:     req.DestId,
+		PacketType: PacketType(req.PacketType),
+		Payload:    req.EncryptedData,
+		Encrypted:  len(req.EncryptedData) > 0,
+		Timestamp:  time.Now(),
+		Metadata:   req.Metadata,
+	}
+
+	// Route through mesh
+	if err := n.meshRouter.RoutePacket(meshPacket); err != nil {
+		n.logger.WithError(err).Error("Failed to route packet")
+		return &pb.PacketResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	return &pb.PacketResponse{
+		Success:   true,
+		PacketId:  req.PacketId,
+		Timestamp: timestamppb.Now(),
+	}, nil
+}
+
+func (n *MeshNode) StreamPackets(stream pb.MeshService_StreamPacketsServer) error {
+	// TODO: Implement packet streaming logic
+	return nil
+}
+
+func (n *MeshNode) AdvertiseRoutes(ctx context.Context, req *pb.RouteAdvertisement) (*pb.RouteResponse, error) {
+	n.logger.WithFields(logrus.Fields{
+		"advertiser":  req.NodeId,
+		"route_count": len(req.Routes),
+	}).Debug("Received route advertisement")
+
+	// Process route advertisement through mesh router
+	if err := n.meshRouter.ProcessRouteAdvertisement(req); err != nil {
+		return &pb.RouteResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	return &pb.RouteResponse{
+		Success: true,
+	}, nil
+}
+
+func (n *MeshNode) RequestRoutes(ctx context.Context, req *pb.RouteRequest) (*pb.RouteResponse, error) {
+	// TODO: Implement route request logic
+	return &pb.RouteResponse{
+		Success: true,
+	}, nil
+}
+
+func (n *MeshNode) InitiateHolePunch(ctx context.Context, req *pb.HolePunchRequest) (*pb.HolePunchResponse, error) {
+	// TODO: Implement hole punch initiation logic
+	return &pb.HolePunchResponse{
+		Success: true,
+	}, nil
+}
+
+func (n *MeshNode) ExchangeConnectionInfo(ctx context.Context, req *pb.ConnectionInfoRequest) (*pb.ConnectionInfoResponse, error) {
+	// TODO: Implement connection info exchange logic
+	return &pb.ConnectionInfoResponse{}, nil
 }
