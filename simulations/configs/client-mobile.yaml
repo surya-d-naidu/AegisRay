@@ -1,0 +1,66 @@
+# AegisRay Mesh Mobile Client (Simulation)
+
+# Node Configuration
+node_name: "client-mobile"
+mesh_ip: ""                        # Auto-assigned
+listen_port: 0                     # Dynamic port for mobile
+log_level: "info"
+
+# Network Configuration
+network_name: "sim-network"
+network_cidr: "100.64.0.0/16"
+dns_servers:
+  - "8.8.8.8"                     # Google DNS (reliable for mobile)
+  - "8.8.4.4"
+
+# Security Configuration
+use_tls: true
+cert_file: ""
+key_file: ""
+
+# Stealth Configuration (Mobile optimized)
+stealth_mode: true
+stealth_domains:
+  - "whatsapp.com"
+  - "facebook.com"
+  - "instagram.com"
+  - "tiktok.com"
+
+# Peer Discovery (Mobile-friendly)
+coordinators:
+  - "172.30.1.10:8443"            # US coordinator
+  - "172.30.1.11:8443"            # EU coordinator
+auto_discovery: true
+discovery_interval: 60             # Longer intervals for battery
+static_peers: []                   # Rely on auto-discovery
+
+# NAT Traversal (Cellular networks)
+stun_servers:
+  - "stun:stun.l.google.com:19302"
+  - "stun:stun1.l.google.com:19302"
+turn_servers: []
+upnp_enabled: false                # Not available on mobile
+
+# Client Routing (Mobile specific)
+allowed_ips:
+  - "100.64.0.0/16"
+excluded_routes:
+  - "172.30.0.0/16"
+  - "10.0.0.0/8"                  # Common mobile carrier networks
+default_route: true
+
+# Performance Configuration (Battery optimized)
+mtu: 1280                          # Conservative MTU for mobile
+keepalive: 30                      # Longer for battery life
+persistent_keepalive: 60
+
+# Client Features
+exit_node: false
+accept_routes: true
+advertise_routes: []
+
+# Advanced Features (Mobile)
+mesh_routing: true
+load_balancing: true               # Use best available connection
+roaming_mode: true                 # Handle network changes
+power_optimization: true           # Battery-friendly settings

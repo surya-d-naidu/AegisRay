@@ -1,0 +1,340 @@
+version: '3.8'
+
+# AegisRay Mesh Network Simulation Environment
+# This creates a complete mesh network with multiple nodes for testing
+
+services:
+  # =============================================================================
+  # Exit Nodes (Internet Gateways)
+  # =============================================================================
+  
+  exit-node-us:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-exit-us
+    hostname: exit-us
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - "8443:8443"   # Coordinator API
+      - "8080:8080"   # Status/Metrics
+      - "443:443"     # Mesh gRPC (HTTPS stealth)
+    volumes:
+      - ./configs/exit-node-us.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=exit-node
+      - NODE_REGION=us-west
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=debug
+      - COORDINATOR_MODE=true
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.10
+    command: ["./aegisray-mesh", "-config=/app/config.yaml", "-exit-node"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  exit-node-eu:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-exit-eu
+    hostname: exit-eu
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    ports:
+      - "8444:8443"   # Coordinator API
+      - "8081:8080"   # Status/Metrics
+      - "444:443"     # Mesh gRPC
+    volumes:
+      - ./configs/exit-node-eu.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=exit-node
+      - NODE_REGION=eu-west
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=debug
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.11
+    depends_on:
+      - exit-node-us
+    command: ["./aegisray-mesh", "-config=/app/config.yaml", "-exit-node"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # =============================================================================
+  # Mesh Client Nodes
+  # =============================================================================
+
+  client-alice:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-client-alice
+    hostname: alice
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./configs/client-alice.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=client
+      - NODE_NAME=alice
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=debug
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.20
+    depends_on:
+      - exit-node-us
+      - exit-node-eu
+    command: ["./aegisray-mesh", "-config=/app/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  client-bob:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-client-bob
+    hostname: bob
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./configs/client-bob.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=client
+      - NODE_NAME=bob
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=debug
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.21
+    depends_on:
+      - exit-node-us
+      - exit-node-eu
+    command: ["./aegisray-mesh", "-config=/app/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  client-charlie:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-client-charlie
+    hostname: charlie
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./configs/client-charlie.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=client
+      - NODE_NAME=charlie
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=debug
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.22
+    depends_on:
+      - exit-node-us
+      - exit-node-eu
+    command: ["./aegisray-mesh", "-config=/app/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # =============================================================================
+  # Mobile Simulation Node
+  # =============================================================================
+
+  client-mobile:
+    build:
+      context: ..
+      dockerfile: Dockerfile.mesh
+    image: aegisray/mesh-sim:latest
+    container_name: sim-client-mobile
+    hostname: mobile
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./configs/client-mobile.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - NODE_ROLE=mobile-client
+      - NODE_NAME=mobile-device
+      - MESH_NETWORK=sim-network
+      - LOG_LEVEL=info
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.25
+    depends_on:
+      - exit-node-us
+    command: ["./aegisray-mesh", "-config=/app/config.yaml"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  # =============================================================================
+  # Monitoring & Testing Services
+  # =============================================================================
+
+  mesh-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.monitor
+    image: aegisray/mesh-monitor:latest
+    container_name: sim-mesh-monitor
+    ports:
+      - "3000:3000"   # Web Dashboard
+      - "9090:9090"   # Prometheus
+      - "3001:3001"   # Grafana
+    volumes:
+      - ./monitor:/app/monitor
+      - monitor-data:/app/data
+    environment:
+      - MESH_NODES=exit-node-us,exit-node-eu,client-alice,client-bob,client-charlie,client-mobile
+      - PROMETHEUS_CONFIG=/app/monitor/prometheus.yml
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.100
+    depends_on:
+      - exit-node-us
+      - exit-node-eu
+      - client-alice
+      - client-bob
+
+  # Network Testing Service
+  network-tester:
+    build:
+      context: .
+      dockerfile: Dockerfile.tester
+    image: aegisray/network-tester:latest
+    container_name: sim-network-tester
+    volumes:
+      - ./tests:/app/tests
+      - ./logs:/app/logs
+    environment:
+      - TEST_SUITE=mesh-connectivity
+      - MESH_NODES=alice,bob,charlie,mobile
+      - EXIT_NODES=exit-us,exit-eu
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.101
+    depends_on:
+      - exit-node-us
+      - client-alice
+      - client-bob
+      - client-charlie
+    command: ["python3", "/app/tests/run_mesh_tests.py"]
+
+  # Traffic Generator (Simulates real usage)
+  traffic-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.traffic
+    image: aegisray/traffic-gen:latest
+    container_name: sim-traffic-generator
+    volumes:
+      - ./traffic:/app/traffic
+      - ./logs:/app/logs
+    environment:
+      - SIMULATION_MODE=realistic
+      - TRAFFIC_PATTERNS=web,streaming,gaming
+      - TARGET_NODES=alice,bob,charlie
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.102
+    depends_on:
+      - client-alice
+      - client-bob
+      - client-charlie
+    command: ["python3", "/app/traffic/generate_traffic.py"]
+
+  # =============================================================================
+  # Chaos Engineering (Network Failures)
+  # =============================================================================
+
+  chaos-monkey:
+    build:
+      context: .
+      dockerfile: Dockerfile.chaos
+    image: aegisray/chaos-monkey:latest
+    container_name: sim-chaos-monkey
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./chaos:/app/chaos
+    environment:
+      - CHAOS_LEVEL=moderate
+      - TARGET_SERVICES=client-alice,client-bob,client-charlie
+      - FAILURE_SCENARIOS=network-partition,node-restart,high-latency
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.103
+    depends_on:
+      - exit-node-us
+      - client-alice
+      - client-bob
+    command: ["python3", "/app/chaos/chaos_controller.py"]
+
+volumes:
+  monitor-data:
+    driver: local
+
+networks:
+  mesh-sim:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.30.1.0/24
+          gateway: 172.30.1.1
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"

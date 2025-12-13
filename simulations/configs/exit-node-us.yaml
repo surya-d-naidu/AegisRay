@@ -1,0 +1,60 @@
+# AegisRay Mesh Exit Node - US West (Simulation)
+
+# Node Configuration
+node_name: "exit-node-us-west"
+mesh_ip: "100.64.0.1"              # Primary exit node
+listen_port: 443
+log_level: "debug"
+
+# Network Configuration
+network_name: "sim-network"
+network_cidr: "100.64.0.0/16"
+dns_servers:
+  - "8.8.8.8"
+  - "1.1.1.1"
+
+# Security Configuration
+use_tls: true
+cert_file: ""                      # Auto-generated
+key_file: ""
+
+# Stealth Configuration
+stealth_mode: true
+stealth_domains:
+  - "cloudflare.com"
+  - "fastly.com"
+  - "amazonaws.com"
+  - "googleapis.com"
+
+# Coordinator Configuration (this node acts as primary coordinator)
+coordinators:
+  - "172.30.1.10:8443"            # Self-reference
+auto_discovery: true
+static_peers: []
+
+# NAT Traversal
+stun_servers:
+  - "stun:stun.l.google.com:19302"
+turn_servers: []
+upnp_enabled: false
+
+# Exit Node Routing
+allowed_ips:
+  - "0.0.0.0/0"                   # Route all internet traffic
+excluded_routes: []
+default_route: true
+
+# Performance Configuration
+mtu: 1420
+keepalive: 15
+persistent_keepalive: 25
+
+# Exit Node Features
+exit_node: true
+accept_routes: true
+advertise_routes:
+  - "0.0.0.0/0"                   # Advertise internet access
+
+# Advanced Features
+mesh_routing: true
+load_balancing: true

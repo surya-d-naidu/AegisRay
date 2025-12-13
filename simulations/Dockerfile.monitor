@@ -1,0 +1,34 @@
+# Monitoring Dockerfile for AegisRay Mesh Network
+
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    dnsutils \
+    iputils-ping \
+    net-tools \
+    tcpdump \
+    iperf3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-monitor.txt /app/
+WORKDIR /app
+RUN pip install -r requirements-monitor.txt
+
+# Copy monitoring scripts
+COPY scripts/monitor/ /app/scripts/
+
+# Create data directory
+RUN mkdir -p /app/data/metrics
+
+# Expose monitoring ports
+EXPOSE 8080 8081
+
+# Set monitoring user
+RUN useradd -m monitor
+USER monitor
+
+# Run monitoring service
+CMD ["python", "scripts/mesh_monitor.py"]

@@ -1,0 +1,61 @@
+# AegisRay Mesh Client - Charlie (Simulation)
+
+# Node Configuration
+node_name: "client-charlie"
+mesh_ip: ""                        # Auto-assigned
+listen_port: 51820
+log_level: "debug"
+
+# Network Configuration
+network_name: "sim-network"
+network_cidr: "100.64.0.0/16"
+dns_servers:
+  - "9.9.9.9"                     # Quad9 DNS
+  - "1.1.1.1"
+
+# Security Configuration
+use_tls: true
+cert_file: ""
+key_key: ""
+
+# Stealth Configuration
+stealth_mode: true
+stealth_domains:
+  - "netflix.com"
+  - "youtube.com"
+  - "twitch.tv"
+
+# Peer Discovery
+coordinators:
+  - "172.30.1.10:8443"            # US coordinator
+  - "172.30.1.11:8443"            # EU coordinator
+auto_discovery: true
+static_peers:
+  - "172.30.1.20:51820"           # Alice (for mesh testing)
+
+# NAT Traversal
+stun_servers:
+  - "stun:stun.cloudflare.com:3478"
+turn_servers: []
+upnp_enabled: false
+
+# Client Routing
+allowed_ips:
+  - "100.64.0.0/16"
+excluded_routes:
+  - "172.30.0.0/16"
+default_route: true
+
+# Performance Configuration (Gaming optimized)
+mtu: 1380                          # Lower MTU for gaming
+keepalive: 10                      # Faster keepalive
+persistent_keepalive: 30
+
+# Client Features
+exit_node: false
+accept_routes: true
+advertise_routes: []
+
+# Advanced Features
+mesh_routing: true
+load_balancing: false              # Disable for gaming consistency

@@ -1,0 +1,39 @@
+# Traffic Generation Dockerfile for AegisRay Mesh
+
+FROM python:3.11-slim
+
+# Install network tools
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    iperf3 \
+    hping3 \
+    nmap \
+    netcat-openbsd \
+    dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for traffic generation
+RUN pip install \
+    requests \
+    scapy \
+    faker \
+    numpy \
+    asyncio \
+    websockets \
+    aiohttp
+
+# Copy traffic generation scripts
+COPY simulations/scripts/traffic/ /app/scripts/
+
+# Create traffic data directory
+RUN mkdir -p /app/traffic-data
+
+WORKDIR /app
+
+# Set traffic generation user (non-root for safety)
+RUN useradd -m trafficgen
+USER trafficgen
+
+# Run traffic generator
+CMD ["python", "scripts/generate_traffic.py"]

@@ -1,0 +1,6 @@
+requests==2.31.0
+websockets==12.0
+psutil==5.9.5
+speedtest-cli==2.1.3
+asyncio
+aiohttp==3.8.6

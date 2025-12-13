@@ -1,0 +1,50 @@
+# Testing Dockerfile for AegisRay Mesh Network
+
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git build-base
+
+# Build test utilities
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN go build -o /bin/mesh-tester ./cmd/tester/
+RUN go build -o /bin/mesh-client ./cmd/mesh/
+
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    curl \
+    iperf3 \
+    netcat-openbsd \
+    bind-tools \
+    tcpdump \
+    mtr \
+    python3 \
+    py3-pip
+
+# Install Python testing tools
+RUN pip3 install \
+    requests \
+    websockets \
+    psutil \
+    speedtest-cli
+
+# Copy built binaries
+COPY --from=builder /bin/mesh-tester /bin/mesh-tester
+COPY --from=builder /bin/mesh-client /bin/mesh-client
+
+# Copy test scripts
+COPY simulations/scripts/test/ /app/scripts/
+
+# Create test data directory
+RUN mkdir -p /app/test-data
+
+WORKDIR /app
+
+# Run mesh tests
+CMD ["python3", "scripts/run_mesh_tests.py"]

@@ -1,0 +1,61 @@
+# AegisRay Mesh Client - Bob (Simulation)
+
+# Node Configuration
+node_name: "client-bob"
+mesh_ip: ""                        # Auto-assigned
+listen_port: 51820
+log_level: "debug"
+
+# Network Configuration
+network_name: "sim-network"
+network_cidr: "100.64.0.0/16"
+dns_servers:
+  - "1.1.1.1"
+  - "8.8.8.8"
+
+# Security Configuration
+use_tls: true
+cert_file: ""
+key_file: ""
+
+# Stealth Configuration
+stealth_mode: true
+stealth_domains:
+  - "reddit.com"
+  - "twitter.com"
+  - "facebook.com"
+
+# Peer Discovery
+coordinators:
+  - "172.30.1.10:8443"            # US coordinator
+  - "172.30.1.11:8443"            # EU coordinator
+auto_discovery: true
+static_peers: []
+
+# NAT Traversal
+stun_servers:
+  - "stun:stun1.l.google.com:19302"
+turn_servers: []
+upnp_enabled: false
+
+# Client Routing
+allowed_ips:
+  - "100.64.0.0/16"
+  - "10.0.0.0/8"
+excluded_routes:
+  - "172.30.0.0/16"
+default_route: true
+
+# Performance Configuration
+mtu: 1420
+keepalive: 25
+persistent_keepalive: 60
+
+# Client Features
+exit_node: false
+accept_routes: true
+advertise_routes: []
+
+# Advanced Features
+mesh_routing: true
+load_balancing: true
