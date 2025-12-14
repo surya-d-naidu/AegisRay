@@ -40,13 +40,16 @@ type MeshNode struct {
 	peersMu sync.RWMutex
 
 	// Services
-	grpcServer   *grpc.Server
-	p2pDiscovery *P2PDiscovery
-	meshRouter   *MeshRouter
-	natTraversal *NATTraversal
-	sniFaker     *sni.SNIFaker
-	encryption   *crypto.EncryptionManager
-	certMgr      *certs.CertificateManager
+	grpcServer      *grpc.Server
+	httpServer      *HTTPServer
+	p2pDiscovery    *P2PDiscovery
+	meshRouter      *MeshRouter
+	natTraversal    *NATTraversal
+	sniFaker        *sni.SNIFaker
+	encryption      *crypto.EncryptionManager
+	certMgr         *certs.CertificateManager
+	tunInterface    *TUNInterface
+	packetForwarder *PacketForwarder
 
 	// State
 	running bool
@@ -218,6 +221,21 @@ func NewMeshNode(cfg *config.MeshConfig) (*MeshNode, error) {
 	// Initialize mesh router for traffic routing
 	node.meshRouter = NewMeshRouter(node)
 
+	// Initialize HTTP API server (port 8080)
+	node.httpServer = NewHTTPServer(node, 8080)
+
+	// Initialize TUN interface for IP traffic
+	if cfg.EnableTUN {
+		tunInterface, err := NewTUNInterface(node.MeshIP, cfg.NetworkCIDR, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create TUN interface: %w", err)
+		}
+		node.tunInterface = tunInterface
+	}
+
+	// Initialize packet forwarder
+	node.packetForwarder = NewPacketForwarder(node)
+
 	return node, nil
 }
 
@@ -251,6 +269,26 @@ func (n *MeshNode) Start() error {
 		return fmt.Errorf("failed to start mesh router: %w", err)
 	}
 
+	// Start packet forwarder
+	if err := n.packetForwarder.Start(); err != nil {
+		return fmt.Errorf("failed to start packet forwarder: %w", err)
+	}
+
+	// Start TUN interface if enabled
+	if n.tunInterface != nil {
+		if err := n.tunInterface.Start(); err != nil {
+			return fmt.Errorf("failed to start TUN interface: %w", err)
+		}
+
+		// Connect TUN interface to packet forwarder
+		go n.bridgeTUNToMesh()
+	}
+
+	// Start HTTP API server
+	if err := n.httpServer.Start(); err != nil {
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
+
 	// Start background routines
 	go n.handlePeerUpdates()
 	go n.handleMeshPackets()
@@ -274,6 +312,18 @@ func (n *MeshNode) Stop() error {
 	close(n.stopCh)
 
 	// Stop services
+	if n.httpServer != nil {
+		n.httpServer.Stop()
+	}
+
+	if n.tunInterface != nil {
+		n.tunInterface.Stop()
+	}
+
+	if n.packetForwarder != nil {
+		n.packetForwarder.Stop()
+	}
+
 	if n.p2pDiscovery != nil {
 		n.p2pDiscovery.Stop()
 	}
@@ -606,6 +656,32 @@ func (n *MeshNode) handleKeyExchangePacket(packet *MeshPacket) {
 
 func (n *MeshNode) sendHeartbeatToPeer(peer *Peer) {
 	// TODO: Send heartbeat to peer
+}
+
+// bridgeTUNToMesh bridges TUN interface traffic to mesh network
+func (n *MeshNode) bridgeTUNToMesh() {
+	n.logger.Info("Starting TUN to mesh bridge")
+
+	for {
+		select {
+		case <-n.stopCh:
+			n.logger.Info("Stopping TUN to mesh bridge")
+			return
+		case packet := <-n.tunInterface.ReceivePacket():
+			// Forward packet through mesh
+			if err := n.packetForwarder.ForwardPacket(packet); err != nil {
+				n.logger.WithError(err).Debug("Failed to forward packet from TUN")
+			}
+		}
+	}
+}
+
+// HandleIncomingMeshPacket handles packets received from mesh peers
+func (n *MeshNode) HandleIncomingMeshPacket(packet []byte) {
+	if n.tunInterface != nil {
+		// Send packet to TUN interface
+		n.tunInterface.SendPacket(packet)
+	}
 }
 
 // Helper functions

@@ -33,3 +33,9 @@ upnp_enabled: false
 allowed_ips:
   - "0.0.0.0/0"
 default_route: true
+advertise_routes:
+  - "0.0.0.0/0"
+
+# TUN Interface (disabled for containerized demo)
+enable_tun: false
+tun_interface_name: "aegis0"

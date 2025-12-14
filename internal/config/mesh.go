@@ -45,6 +45,10 @@ type MeshConfig struct {
 	ExcludedRoutes []string `yaml:"excluded_routes"`
 	DefaultRoute   bool     `yaml:"default_route"`
 
+	// TUN Interface
+	EnableTUN        bool   `yaml:"enable_tun"`
+	TUNInterfaceName string `yaml:"tun_interface_name"`
+
 	// Performance
 	MTU                 int `yaml:"mtu"`
 	KeepAlive           int `yaml:"keepalive"`
