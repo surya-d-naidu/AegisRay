@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aegisray/vpn-tunnel/internal/crypto"
 	pb "github.com/aegisray/vpn-tunnel/proto/mesh"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -191,6 +192,28 @@ func (p2p *P2PDiscovery) performHandshake(client pb.MeshServiceClient, address s
 
 	if !joinResp.Success {
 		return fmt.Errorf("join rejected: %s", joinResp.Error)
+	}
+
+	// Find the peer that responded to verify the response signature
+	var responderPeer *pb.PeerInfo
+	for _, peer := range joinResp.Peers {
+		// Verify strict identity: NodeID must be hash of PublicKey
+		if peer.Id != generateNodeID(peer.PublicKey) {
+			return fmt.Errorf("peer %s has invalid identity binding", peer.Id)
+		}
+
+		// Look for the responder (B) - in this simple flow we check which one's signature matches
+		if joinResp.Signature != "" {
+			sigBytes, _ := base64.StdEncoding.DecodeString(joinResp.Signature)
+			verifyData := []byte(joinResp.AssignedIp + peer.Id + p2p.node.config.NetworkName)
+			if crypto.Verify(verifyData, sigBytes, []byte(peer.PublicKey)) == nil {
+				responderPeer = peer
+			}
+		}
+	}
+
+	if joinResp.Signature != "" && responderPeer == nil {
+		return fmt.Errorf("failed to verify JoinResponse signature from any peer")
 	}
 
 	// Store peer info from response peers

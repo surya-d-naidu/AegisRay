@@ -1,0 +1,31 @@
+# -------------------------------------------------------------------
+# 💻 TEMPLATE: Standard Mesh Peer (Laptop/Desktop)
+# Use this for regular clients connecting to the mesh.
+# -------------------------------------------------------------------
+
+# Node Identity
+node_name: "mypc-alice"      # Change this to a unique name
+# mesh_ip: "100.64.0.10"     # Optional: Fixed IP. If commented, auto-assigns.
+
+# Network Settings
+network_name: "aegis-corp"   # Must match the rest of your mesh
+network_cidr: "100.64.0.0/16"
+listen_port: 51820           # UDP port to listen on
+
+# Security & Stealth (Recommended for Clients)
+use_tls: true
+stealth_mode: true
+stealth_domains:
+  - "cloudflare.com"
+  - "google.com"
+
+# Discovery
+auto_discovery: true         # Enable Gossip Protocol
+static_peers:
+  # Add at least one stable node (Gateway/Server) here to bootstrap
+  - "vpn.example.com:51820"
+
+# Routing Role
+enable_tun: true             # We want a network interface to talk!
+mesh_routing: false          # Clients usually don't route traffic for others
+exit_node: false

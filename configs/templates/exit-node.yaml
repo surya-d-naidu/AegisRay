@@ -1,0 +1,24 @@
+# -------------------------------------------------------------------
+# 🚪 TEMPLATE: Exit Node (Internet Gateway)
+# Use this to route internet traffic through this node.
+# -------------------------------------------------------------------
+
+# Node Identity
+node_name: "exit-node-us"
+mesh_ip: "100.64.0.1"        # Exit nodes usually take the .1 address
+
+# Network
+listen_port: 51820
+network_name: "aegis-corp"
+
+# The Magic Switch
+exit_node: true              # Advertises 0.0.0.0/0 route to the mesh
+
+# Roles
+mesh_routing: true
+enable_tun: true             # Required to offload packets to OS
+
+# OS Configuration Reminder:
+# You MUST enable IP forwarding on the host machine:
+# sysctl -w net.ipv4.ip_forward=1
+# iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE

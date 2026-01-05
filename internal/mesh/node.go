@@ -2,7 +2,6 @@ package mesh
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -131,6 +130,10 @@ const (
 	RouteAdvertisement
 )
 
+const (
+	KeyRotationInterval = 1 * time.Hour
+)
+
 // NATType represents different NAT types
 type NATType int
 
@@ -145,12 +148,6 @@ const (
 
 // NewMeshNode creates a new mesh network node
 func NewMeshNode(cfg *config.MeshConfig) (*MeshNode, error) {
-	// Generate node ID
-	nodeID, err := generateNodeID()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate node ID: %w", err)
-	}
-
 	// Create encryption manager
 	encryption, err := crypto.NewEncryptionManager()
 	if err != nil {
@@ -162,6 +159,9 @@ func NewMeshNode(cfg *config.MeshConfig) (*MeshNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get public key: %w", err)
 	}
+
+	// Generate node ID from public key
+	nodeID := generateNodeID(string(publicKey))
 
 	// Setup logger
 	logger := logrus.New()
@@ -430,8 +430,8 @@ func (n *MeshNode) SendMeshPacket(destIP net.IP, packet []byte) error {
 		return fmt.Errorf("no route to destination %s", destIP.String())
 	}
 
-	// Encrypt packet
-	encryptedPacket, err := n.encryption.Encrypt(packet)
+	// Encrypt packet with peer-specific session key
+	encryptedPacket, err := n.encryption.PeerEncrypt(targetPeer.ID, packet)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt packet: %w", err)
 	}
@@ -594,24 +594,97 @@ func (n *MeshNode) processMeshPacket(packet *MeshPacket) {
 
 func (n *MeshNode) performPeerMaintenance() {
 	n.peersMu.RLock()
-	defer n.peersMu.RUnlock()
+	// Create a snapshot of peers to avoid holding the lock during reconnection attempts
+	peers := make([]*Peer, 0, len(n.peers))
+	for _, peer := range n.peers {
+		peers = append(peers, peer)
+	}
+	n.peersMu.RUnlock()
 
 	now := time.Now()
-	for _, peer := range n.peers {
-		// Check for stale peers
-		if now.Sub(peer.LastSeen) > 5*time.Minute {
-			peer.Connected = false
-			// TODO: Attempt reconnection
+	for _, peer := range peers {
+		peer.mu.Lock()
+		isStale := now.Sub(peer.LastSeen) > 5*time.Minute
+		isConnected := peer.Connected
+		peerID := peer.ID
+		peer.mu.Unlock()
+
+		if isStale {
+			if isConnected {
+				n.logger.WithField("peer_id", peerID).Warn("Peer is stale, marking disconnected")
+				peer.mu.Lock()
+				peer.Connected = false
+				peer.mu.Unlock()
+			}
+			// Attempt reconnection for stale or disconnected peers
+			go n.AttemptPeerReconnection(peer)
 		}
 
-		// Send heartbeat
-		n.sendHeartbeatToPeer(peer)
+		// Also send heartbeats to active peers
+		if isConnected {
+			n.sendHeartbeatToPeer(peer)
+		}
+	}
+}
+
+// AttemptPeerReconnection attempts to reconnect to a lost peer
+func (n *MeshNode) AttemptPeerReconnection(peer *Peer) {
+	peer.mu.RLock()
+	peerID := peer.ID
+	endpoint := peer.Endpoint
+	publicAddr := peer.PublicAddr
+	peer.mu.RUnlock()
+
+	n.logger.WithField("peer_id", peerID).Info("Attempting to reconnect to peer")
+
+	// 1. Try last known direct endpoint
+	if endpoint != nil {
+		if err := n.p2pDiscovery.connectToPeer(endpoint.String()); err == nil {
+			n.logger.WithField("peer_id", peerID).Info("Successfully reconnected via direct endpoint")
+			return
+		}
+	}
+
+	// 2. Try last known public address
+	if publicAddr != nil && (endpoint == nil || publicAddr.String() != endpoint.String()) {
+		if err := n.p2pDiscovery.connectToPeer(publicAddr.String()); err == nil {
+			n.logger.WithField("peer_id", peerID).Info("Successfully reconnected via public address")
+			return
+		}
+	}
+
+	// 3. Try NAT Traversal fallback if enabled
+	if n.natTraversal != nil {
+		n.logger.WithField("peer_id", peerID).Debug("Triggering NAT traversal fallback for reconnection")
+		// We can't call tryHolePunching directly as it needs PeerConnectionInfo
+		// but P2PDiscovery might have it.
+		// For now, we'll rely on the node's background discovery to find it again.
 	}
 }
 
 func (n *MeshNode) performKeyRotation() {
-	// TODO: Implement key rotation logic
-	n.logger.Debug("Performing key rotation")
+	n.peersMu.RLock()
+	peers := make([]*Peer, 0, len(n.peers))
+	for _, peer := range n.peers {
+		peers = append(peers, peer)
+	}
+	n.peersMu.RUnlock()
+
+	now := time.Now()
+	for _, peer := range peers {
+		peer.mu.RLock()
+		if !peer.Connected {
+			peer.mu.RUnlock()
+			continue
+		}
+		needsRotation := now.Sub(peer.KeyRotation) > KeyRotationInterval
+		peer.mu.RUnlock()
+
+		if needsRotation {
+			n.logger.WithField("peer_id", peer.ID).Info("Starting periodic key rotation")
+			go n.sendKeyExchange(peer)
+		}
+	}
 }
 
 func (n *MeshNode) disconnectPeerUnsafe(peer *Peer) {
@@ -623,6 +696,12 @@ func (n *MeshNode) disconnectPeerUnsafe(peer *Peer) {
 func (n *MeshNode) handlePeerJoined(peer *Peer) {
 	n.logger.WithField("peer_id", peer.ID).Info("Peer joined mesh")
 	go n.sendHeartbeatToPeer(peer)
+
+	// Initiate key exchange if we are the "initiator" or just to be safe
+	// In P2P, both can send, the last one wins or we use a deterministic priority (e.g. ID comparison)
+	if n.ID < peer.ID {
+		go n.sendKeyExchange(peer)
+	}
 }
 
 func (n *MeshNode) handlePeerLeft(peer *Peer) {
@@ -655,10 +734,10 @@ func (n *MeshNode) handleDataPacket(packet *MeshPacket) {
 		return
 	}
 
-	// Decrypt payload
-	data, err := n.encryption.Decrypt(packet.Payload)
+	// Decrypt payload with peer-specific session key
+	data, err := n.encryption.PeerDecrypt(packet.SourceID, packet.Payload)
 	if err != nil {
-		n.logger.WithError(err).Error("Failed to decrypt data packet")
+		n.logger.WithError(err).WithField("source", packet.SourceID).Error("Failed to decrypt data packet")
 		return
 	}
 
@@ -690,8 +769,112 @@ func (n *MeshNode) handleHeartbeatPacket(packet *MeshPacket) {
 }
 
 func (n *MeshNode) handleKeyExchangePacket(packet *MeshPacket) {
-	// Placeholder for key exchange logic
 	n.logger.WithField("source", packet.SourceID).Debug("Received key exchange packet")
+
+	// Verify we have this peer
+	n.peersMu.RLock()
+	peer, exists := n.peers[packet.SourceID]
+	n.peersMu.RUnlock()
+
+	if !exists {
+		n.logger.WithField("source", packet.SourceID).Warn("Received key exchange from unknown peer")
+		return
+	}
+
+	// The payload is [SignatureLen(4 bytes)][Signature][EncryptedKey]
+	if len(packet.Payload) < 4 {
+		return
+	}
+	sigLen := binary.BigEndian.Uint32(packet.Payload[:4])
+	if uint32(len(packet.Payload)) < 4+sigLen {
+		return
+	}
+	signature := packet.Payload[4 : 4+sigLen]
+	encryptedKey := packet.Payload[4+sigLen:]
+
+	// 1. Verify signature using peer's RSA public key
+	if err := crypto.Verify(encryptedKey, signature, []byte(peer.PublicKey)); err != nil {
+		n.logger.WithError(err).WithField("source", packet.SourceID).Error("Key exchange signature verification failed")
+		return
+	}
+
+	// 2. Decrypt encrypted session key using our RSA private key
+	sessionKey, err := n.encryption.DecryptWithRSA(encryptedKey)
+	if err != nil {
+		n.logger.WithError(err).Error("Failed to decrypt session key")
+		return
+	}
+
+	// 3. Install the session key
+	if err := n.encryption.SetPeerKey(packet.SourceID, sessionKey); err != nil {
+		n.logger.WithError(err).Error("Failed to install session key")
+		return
+	}
+
+	peer.mu.Lock()
+	peer.KeyRotation = time.Now()
+	peer.mu.Unlock()
+
+	n.logger.WithField("peer_id", packet.SourceID).Info("Successfully established secure session key")
+}
+
+func (n *MeshNode) sendKeyExchange(peer *Peer) {
+	n.logger.WithField("peer_id", peer.ID).Info("Initiating key exchange")
+
+	// 1. Generate a new random session key
+	sessionKey, err := crypto.GenerateSharedKey()
+	if err != nil {
+		n.logger.WithError(err).Error("Failed to generate session key")
+		return
+	}
+
+	// 2. Encrypt session key with peer's RSA public key
+	encryptedKey, err := crypto.EncryptWithRSA(sessionKey, []byte(peer.PublicKey))
+	if err != nil {
+		n.logger.WithError(err).Error("Failed to encrypt session key")
+		return
+	}
+
+	// 3. Sign the encrypted key with our RSA private key
+	signature, err := n.encryption.Sign(encryptedKey)
+	if err != nil {
+		n.logger.WithError(err).Error("Failed to sign session key")
+		return
+	}
+
+	// 4. Construct payload: [SigLen][Signature][EncryptedKey]
+	payload := make([]byte, 4+len(signature)+len(encryptedKey))
+	binary.BigEndian.PutUint32(payload[:4], uint32(len(signature)))
+	copy(payload[4:], signature)
+	copy(payload[4+len(signature):], encryptedKey)
+
+	// 5. Send via MeshService
+	client, exists := n.p2pDiscovery.GetPeerClient(peer.ID)
+	if !exists {
+		return
+	}
+
+	req := &pb.PacketRequest{
+		SourceId:      n.ID,
+		DestId:        peer.ID,
+		PacketType:    pb.PacketType_KEY_EXCHANGE,
+		EncryptedData: payload,
+		Timestamp:     timestamppb.Now(),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := client.SendPacket(ctx, req); err != nil {
+		n.logger.WithError(err).Warn("Failed to send key exchange packet")
+		return
+	}
+
+	// Install the key locally as well
+	n.encryption.SetPeerKey(peer.ID, sessionKey)
+	peer.mu.Lock()
+	peer.KeyRotation = time.Now()
+	peer.mu.Unlock()
 }
 
 func (n *MeshNode) sendHeartbeatToPeer(peer *Peer) {
@@ -745,12 +928,9 @@ func (n *MeshNode) HandleIncomingMeshPacket(packet []byte) {
 
 // Helper functions
 
-func generateNodeID() (string, error) {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
+func generateNodeID(publicKey string) string {
+	hash := sha256.Sum256([]byte(publicKey))
+	return hex.EncodeToString(hash[:16])
 }
 
 // autoAssignMeshIP generates a unique IP address within the given CIDR for a node
@@ -937,12 +1117,21 @@ func (n *MeshNode) JoinNetwork(ctx context.Context, req *pb.JoinRequest) (*pb.Jo
 
 	n.logger.WithField("peer_count", len(peerList)).Info("Peer joined mesh network")
 
-	return &pb.JoinResponse{
+	resp := &pb.JoinResponse{
 		Success:     true,
-		AssignedIp:  req.MeshIp, // In P2P mesh, peers choose their own IPs
+		AssignedIp:  req.MeshIp,
 		Peers:       peerList,
 		NetworkInfo: networkInfo,
-	}, nil
+	}
+
+	// Sign response
+	signData := []byte(resp.AssignedIp + n.ID + n.config.NetworkName)
+	signature, err := n.encryption.Sign(signData)
+	if err == nil {
+		resp.Signature = base64.StdEncoding.EncodeToString(signature)
+	}
+
+	return resp, nil
 }
 
 func (n *MeshNode) LeaveNetwork(ctx context.Context, req *pb.LeaveRequest) (*pb.LeaveResponse, error) {

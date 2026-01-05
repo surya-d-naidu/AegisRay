@@ -1,0 +1,24 @@
+# -------------------------------------------------------------------
+# 🏢 TEMPLATE: Site-to-Site LAN Connector
+# Use this to expose an office LAN (e.g., 192.168.1.x) to the mesh.
+# -------------------------------------------------------------------
+
+# Node Identity
+node_name: "office-router"
+mesh_ip: "100.64.0.5"
+
+# Network
+listen_port: 51820
+network_name: "aegis-corp"
+
+# Route Advertising
+advertise_routes:
+  - "192.168.1.0/24"         # The LAN subnet we are exposing
+  # - "10.0.0.0/8"           # Add more if needed
+
+# Roles
+mesh_routing: true           # Must leverage routing
+enable_tun: true
+
+# OS Configuration Reminder:
+# You MUST enable IP forwarding on the host machine.

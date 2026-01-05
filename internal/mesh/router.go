@@ -2,11 +2,13 @@ package mesh
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/aegisray/vpn-tunnel/internal/crypto"
 	pb "github.com/aegisray/vpn-tunnel/proto/mesh"
 	"github.com/sirupsen/logrus"
 )
@@ -226,7 +228,6 @@ func (mr *MeshRouter) deliverLocally(packet *MeshPacket) error {
 	}
 }
 
-// AdvertiseRoutes advertises routes to peers with Split Horizon
 func (mr *MeshRouter) AdvertiseRoutes() error {
 	mr.routeMu.RLock()
 	// Create a snapshot of all routes to avoid holding the lock during network I/O
@@ -255,14 +256,13 @@ func (mr *MeshRouter) AdvertiseRoutes() error {
 		peerRoutes := make([]*pb.Route, 0)
 		for _, route := range allRoutes {
 			// Rule: Do not advertise a route back to its next hop
-			// This prevents routing loops where A->B->A
 			if route.NextHop == peerID {
 				continue
 			}
 
 			pbRoute := &pb.Route{
 				Destination: route.Destination.String(),
-				NextHop:     mr.node.ID, // We are the gateway for this route
+				NextHop:     mr.node.ID,
 				Metric:      int32(route.Metric),
 				RouteType:   pb.RouteType(1),
 			}
@@ -284,21 +284,29 @@ func (mr *MeshRouter) AdvertiseRoutes() error {
 				SequenceNumber: uint32(time.Now().Unix()),
 			}
 
+			// Sign the advertisement
+			signData := []byte(advertisement.NodeId + fmt.Sprintf("%d", advertisement.SequenceNumber))
+			for _, r := range routes {
+				signData = append(signData, []byte(r.Destination+r.NextHop)...)
+			}
+
+			signature, err := mr.node.encryption.Sign(signData)
+			if err != nil {
+				mr.logger.WithError(err).Error("Failed to sign route advertisement")
+				return
+			}
+			advertisement.Signature = base64.StdEncoding.EncodeToString(signature)
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
 			if _, err := c.AdvertiseRoutes(ctx, advertisement); err != nil {
 				mr.logger.WithError(err).WithField("peer_id", pid).Warn("Failed to advertise routes")
-			} else {
-				// Only track successful advertisements if precise stats needed
 			}
 		}(client, peerID, peerRoutes)
 	}
 
-	// We don't block here to keep the ticker loop responsive
-	// Just logging a summary is enough
-	mr.logger.Debug("Dispatched route advertisements")
-
+	mr.logger.Debug("Dispatched signed route advertisements")
 	return nil
 }
 
@@ -309,6 +317,34 @@ func (mr *MeshRouter) ProcessRouteAdvertisement(adv *pb.RouteAdvertisement) erro
 		"route_count": len(adv.Routes),
 		"sequence":    adv.SequenceNumber,
 	}).Debug("Processing route advertisement")
+
+	// Get peer public key for verification
+	mr.node.peersMu.RLock()
+	peer, exists := mr.node.peers[adv.NodeId]
+	mr.node.peersMu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("peer %s not found, cannot verify advertisement", adv.NodeId)
+	}
+
+	// Verify signature
+	if adv.Signature == "" {
+		return fmt.Errorf("missing signature in route advertisement from %s", adv.NodeId)
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(adv.Signature)
+	if err != nil {
+		return fmt.Errorf("invalid signature encoding in advertisement")
+	}
+
+	verifyData := []byte(adv.NodeId + fmt.Sprintf("%d", adv.SequenceNumber))
+	for _, r := range adv.Routes {
+		verifyData = append(verifyData, []byte(r.Destination+r.NextHop)...)
+	}
+
+	if err := crypto.Verify(verifyData, sigBytes, []byte(peer.PublicKey)); err != nil {
+		return fmt.Errorf("route advertisement signature verification failed: %w", err)
+	}
 
 	mr.routeMu.Lock()
 	defer mr.routeMu.Unlock()

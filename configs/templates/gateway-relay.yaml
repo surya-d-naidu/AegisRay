@@ -1,0 +1,29 @@
+# -------------------------------------------------------------------
+# 🌐 TEMPLATE: Mesh Gateway / Relay Node
+# Use this for a VPS/Server with a stable Public IP.
+# Its job is to help NAT'd peers connect and relay traffic.
+# -------------------------------------------------------------------
+
+# Node Identity
+node_name: "gateway-01"
+# mesh_ip: "100.64.0.1"      # Gateways should usually have a fixed, low IP
+
+# Network Settings
+network_name: "aegis-corp"
+listen_port: 51820
+mtu: 1420
+
+# Relay Capabilities
+mesh_routing: true           # CRITICAL: Allow relaying packet A -> Me -> B
+accept_routes: true          # Learn routes from others
+
+# Security
+use_tls: true
+stealth_mode: true           # Can be disabled if your firewall allows UDP explicitly
+
+# System
+enable_tun: false            # Set false if this is PURE relay (save resources)
+                             # Set true if you want to ping from this node
+
+# Discovery
+static_peers: []             # Gateways are usually the "roots", they wait for connection

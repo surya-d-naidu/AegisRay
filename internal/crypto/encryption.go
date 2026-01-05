@@ -11,68 +11,143 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"sync"
 )
 
-// EncryptionManager handles AES encryption/decryption
+// EncryptionManager handles AES encryption/decryption for multiple peers
 type EncryptionManager struct {
-	key    []byte
-	gcm    cipher.AEAD
-	rsaKey *rsa.PrivateKey
+	rsaKey   *rsa.PrivateKey
+	peerKeys map[string]cipher.AEAD
+	mu       sync.RWMutex
+
+	// Default key for backward compatibility or broadcast
+	defaultGCM cipher.AEAD
 }
 
 // NewEncryptionManager creates a new encryption manager
 func NewEncryptionManager() (*EncryptionManager, error) {
-	// Generate AES key
-	key := make([]byte, 32) // AES-256
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("failed to generate AES key: %w", err)
-	}
-
-	// Create AES cipher
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate RSA key pair
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
 	}
 
+	// Create a default key
+	key := make([]byte, 32) // AES-256
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("failed to generate default AES key: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create default GCM: %w", err)
+	}
+
 	return &EncryptionManager{
-		key:    key,
-		gcm:    gcm,
-		rsaKey: rsaKey,
+		rsaKey:     rsaKey,
+		peerKeys:   make(map[string]cipher.AEAD),
+		defaultGCM: gcm,
 	}, nil
 }
 
-// Encrypt encrypts data using AES-256-GCM
-func (em *EncryptionManager) Encrypt(data []byte) ([]byte, error) {
-	nonce := make([]byte, em.gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+// GenerateSharedKey creates a random 32-byte key for AES-256
+func GenerateSharedKey() ([]byte, error) {
+	key := make([]byte, 32) // AES-256
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("failed to generate shared key: %w", err)
+	}
+	return key, nil
+}
+
+// SetPeerKey sets a session key for a specific peer
+func (em *EncryptionManager) SetPeerKey(peerID string, key []byte) error {
+	if len(key) != 32 {
+		return fmt.Errorf("key must be 32 bytes for AES-256")
 	}
 
-	ciphertext := em.gcm.Seal(nonce, nonce, data, nil)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return fmt.Errorf("failed to create AES cipher for peer %s: %w", peerID, err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to create GCM for peer %s: %w", peerID, err)
+	}
+
+	em.mu.Lock()
+	em.peerKeys[peerID] = gcm
+	em.mu.Unlock()
+	return nil
+}
+
+// PeerEncrypt encrypts data for a specific peer using their session key
+func (em *EncryptionManager) PeerEncrypt(peerID string, data []byte) ([]byte, error) {
+	em.mu.RLock()
+	gcm, exists := em.peerKeys[peerID]
+	em.mu.RUnlock()
+
+	if !exists {
+		// Fallback to default GCM if no specific key for the peer
+		return em.Encrypt(data)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce for peer %s: %w", peerID, err)
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
 	return ciphertext, nil
 }
 
-// Decrypt decrypts data using AES-256-GCM
-func (em *EncryptionManager) Decrypt(data []byte) ([]byte, error) {
-	if len(data) < em.gcm.NonceSize() {
-		return nil, fmt.Errorf("ciphertext too short")
+// PeerDecrypt decrypts data from a specific peer using their session key
+func (em *EncryptionManager) PeerDecrypt(peerID string, data []byte) ([]byte, error) {
+	em.mu.RLock()
+	gcm, exists := em.peerKeys[peerID]
+	em.mu.RUnlock()
+
+	if !exists {
+		// Fallback to default GCM if no specific key for the peer
+		return em.Decrypt(data)
 	}
 
-	nonce, ciphertext := data[:em.gcm.NonceSize()], data[em.gcm.NonceSize():]
-	plaintext, err := em.gcm.Open(nil, nonce, ciphertext, nil)
+	if len(data) < gcm.NonceSize() {
+		return nil, fmt.Errorf("ciphertext too short for peer %s", peerID)
+	}
+
+	nonce, ciphertext := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
+		return nil, fmt.Errorf("failed to decrypt for peer %s: %w", peerID, err)
+	}
+
+	return plaintext, nil
+}
+
+// Encrypt encrypts data using the default AES-256-GCM key
+func (em *EncryptionManager) Encrypt(data []byte) ([]byte, error) {
+	nonce := make([]byte, em.defaultGCM.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce for default encryption: %w", err)
+	}
+
+	ciphertext := em.defaultGCM.Seal(nonce, nonce, data, nil)
+	return ciphertext, nil
+}
+
+// Decrypt decrypts data using the default AES-256-GCM key
+func (em *EncryptionManager) Decrypt(data []byte) ([]byte, error) {
+	if len(data) < em.defaultGCM.NonceSize() {
+		return nil, fmt.Errorf("ciphertext too short for default decryption")
+	}
+
+	nonce, ciphertext := data[:em.defaultGCM.NonceSize()], data[em.defaultGCM.NonceSize():]
+	plaintext, err := em.defaultGCM.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt with default key: %w", err)
 	}
 
 	return plaintext, nil
@@ -92,27 +167,6 @@ func (em *EncryptionManager) GetPublicKeyPEM() ([]byte, error) {
 	})
 
 	return pubKeyPEM, nil
-}
-
-// SetSharedKey sets a shared AES key (after key exchange)
-func (em *EncryptionManager) SetSharedKey(key []byte) error {
-	if len(key) != 32 {
-		return fmt.Errorf("key must be 32 bytes for AES-256")
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return fmt.Errorf("failed to create AES cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	em.key = key
-	em.gcm = gcm
-	return nil
 }
 
 // EncryptWithRSA encrypts data using RSA public key

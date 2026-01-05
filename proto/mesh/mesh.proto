@@ -48,6 +48,7 @@ message JoinResponse {
     repeated PeerInfo peers = 3;
     NetworkInfo network_info = 4;
     string error = 5;
+    string signature = 6;
 }
 
 message LeaveRequest {

@@ -403,6 +403,7 @@ type JoinResponse struct {
 	Peers         []*PeerInfo            `protobuf:"bytes,3,rep,name=peers,proto3" json:"peers,omitempty"`
 	NetworkInfo   *NetworkInfo           `protobuf:"bytes,4,opt,name=network_info,json=networkInfo,proto3" json:"network_info,omitempty"`
 	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	Signature     string                 `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -468,6 +469,13 @@ func (x *JoinResponse) GetNetworkInfo() *NetworkInfo {
 func (x *JoinResponse) GetError() string {
 	if x != nil {
 		return x.Error
+	}
+	return ""
+}
+
+func (x *JoinResponse) GetSignature() string {
+	if x != nil {
+		return x.Signature
 	}
 	return ""
 }
@@ -2341,14 +2349,15 @@ const file_proto_mesh_mesh_proto_rawDesc = "" +
 	"\x0fconnection_info\x18\x05 \x01(\v2\x1d.aegisray.mesh.ConnectionInfoR\x0econnectionInfo\x128\n" +
 	"\ttimestamp\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12!\n" +
 	"\fnetwork_name\x18\a \x01(\tR\vnetworkName\x12\x1c\n" +
-	"\tsignature\x18\b \x01(\tR\tsignature\"\xcd\x01\n" +
+	"\tsignature\x18\b \x01(\tR\tsignature\"\xeb\x01\n" +
 	"\fJoinResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1f\n" +
 	"\vassigned_ip\x18\x02 \x01(\tR\n" +
 	"assignedIp\x12-\n" +
 	"\x05peers\x18\x03 \x03(\v2\x17.aegisray.mesh.PeerInfoR\x05peers\x12=\n" +
 	"\fnetwork_info\x18\x04 \x01(\v2\x1a.aegisray.mesh.NetworkInfoR\vnetworkInfo\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\x97\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x1c\n" +
+	"\tsignature\x18\x06 \x01(\tR\tsignature\"\x97\x01\n" +
 	"\fLeaveRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x128\n" +
