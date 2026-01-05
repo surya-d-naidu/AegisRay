@@ -21,7 +21,7 @@ COPY . .
 RUN export PATH=$PATH:$(go env GOPATH)/bin && \
     protoc --go_out=. --go_opt=paths=source_relative \
     --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-    proto/mesh/mesh.proto proto/tunnel/tunnel.proto
+    proto/mesh/mesh.proto
 
 # Build mesh binary
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o aegisray-mesh cmd/mesh/main.go

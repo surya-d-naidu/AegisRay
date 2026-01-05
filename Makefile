@@ -3,10 +3,8 @@
 # Build all components
 build: proto
 	@echo "Building AegisRay..."
-	go build -o bin/aegisray-server cmd/server/main.go
-	go build -o bin/aegisray-client cmd/client/main.go
 	go build -o bin/aegisray-mesh cmd/mesh/main.go
-	@echo "Build complete. Binaries in bin/"
+	@echo "Build complete. Binary in bin/"
 
 # Install dependencies
 deps:
@@ -17,20 +15,10 @@ deps:
 # Generate protobuf files
 proto:
 	@echo "Generating protobuf files..."
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		proto/tunnel/tunnel.proto
+	export PATH=$(PATH):$(HOME)/go/bin && \
 	protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/mesh/mesh.proto
-
-# Build server only
-server: proto
-	go build -o bin/aegisray-server cmd/server/main.go
-
-# Build client only
-client: proto
-	go build -o bin/aegisray-client cmd/client/main.go
 
 # Build mesh node only
 mesh: proto

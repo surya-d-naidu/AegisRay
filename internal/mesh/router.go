@@ -226,55 +226,78 @@ func (mr *MeshRouter) deliverLocally(packet *MeshPacket) error {
 	}
 }
 
-// AdvertiseRoutes advertises routes to peers
+// AdvertiseRoutes advertises routes to peers with Split Horizon
 func (mr *MeshRouter) AdvertiseRoutes() error {
 	mr.routeMu.RLock()
-	routes := make([]*pb.Route, 0, len(mr.routes))
-
+	// Create a snapshot of all routes to avoid holding the lock during network I/O
+	allRoutes := make([]*Route, 0, len(mr.routes))
 	for _, route := range mr.routes {
-		if route.Source == mr.node.ID { // Only advertise our own routes
-			pbRoute := &pb.Route{
-				Destination: route.Destination.String(),
-				NextHop:     route.NextHop,
-				Metric:      int32(route.Metric),
-				RouteType:   pb.RouteType(1), // Mesh route type
-			}
-			routes = append(routes, pbRoute)
-		}
+		allRoutes = append(allRoutes, route)
 	}
 	mr.routeMu.RUnlock()
 
-	if len(routes) == 0 {
+	// Get all active peers
+	peers := mr.node.p2pDiscovery.GetActivePeers()
+	if len(peers) == 0 {
 		return nil
 	}
 
-	// Create route advertisement
-	advertisement := &pb.RouteAdvertisement{
-		NodeId:         mr.node.ID,
-		Routes:         routes,
-		SequenceNumber: uint32(time.Now().Unix()),
-	}
+	var wg sync.WaitGroup
 
-	// Send to all connected peers
-	peers := mr.node.p2pDiscovery.GetActivePeers()
+	// Send updates to each peer individually (for Split Horizon)
 	for peerID := range peers {
 		client, exists := mr.node.p2pDiscovery.GetPeerClient(peerID)
 		if !exists {
 			continue
 		}
 
-		go func(c pb.MeshServiceClient, pid string) {
+		// Filter routes for this peer (Split Horizon)
+		peerRoutes := make([]*pb.Route, 0)
+		for _, route := range allRoutes {
+			// Rule: Do not advertise a route back to its next hop
+			// This prevents routing loops where A->B->A
+			if route.NextHop == peerID {
+				continue
+			}
+
+			pbRoute := &pb.Route{
+				Destination: route.Destination.String(),
+				NextHop:     mr.node.ID, // We are the gateway for this route
+				Metric:      int32(route.Metric),
+				RouteType:   pb.RouteType(1),
+			}
+			peerRoutes = append(peerRoutes, pbRoute)
+		}
+
+		if len(peerRoutes) == 0 {
+			continue
+		}
+
+		// Send advertisement asynchronously
+		wg.Add(1)
+		go func(c pb.MeshServiceClient, pid string, routes []*pb.Route) {
+			defer wg.Done()
+
+			advertisement := &pb.RouteAdvertisement{
+				NodeId:         mr.node.ID,
+				Routes:         routes,
+				SequenceNumber: uint32(time.Now().Unix()),
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, err := c.AdvertiseRoutes(ctx, advertisement)
-			if err != nil {
+
+			if _, err := c.AdvertiseRoutes(ctx, advertisement); err != nil {
 				mr.logger.WithError(err).WithField("peer_id", pid).Warn("Failed to advertise routes")
+			} else {
+				// Only track successful advertisements if precise stats needed
 			}
-		}(client, peerID)
+		}(client, peerID, peerRoutes)
 	}
 
-	mr.incrementAdvertised(int64(len(routes)))
-	mr.logger.WithField("route_count", len(routes)).Debug("Advertised routes to peers")
+	// We don't block here to keep the ticker loop responsive
+	// Just logging a summary is enough
+	mr.logger.Debug("Dispatched route advertisements")
 
 	return nil
 }

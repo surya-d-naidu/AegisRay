@@ -72,13 +72,14 @@ func LoadMeshConfig(filename string) (*MeshConfig, error) {
 	}
 
 	var config MeshConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
 
-	// Set defaults
+	// Set defaults first
 	if err := setMeshConfigDefaults(&config); err != nil {
 		return nil, fmt.Errorf("failed to set defaults: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
 	// Validate configuration
@@ -147,6 +148,13 @@ func setMeshConfigDefaults(config *MeshConfig) error {
 
 	// Enable TLS by default for security
 	config.UseTLS = true
+
+	if config.CertFile == "" {
+		config.CertFile = "certs/node.crt"
+	}
+	if config.KeyFile == "" {
+		config.KeyFile = "certs/node.key"
+	}
 
 	// Enable auto-discovery by default
 	config.AutoDiscovery = true

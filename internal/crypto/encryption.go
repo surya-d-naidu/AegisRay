@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -137,4 +138,31 @@ func EncryptWithRSA(data []byte, pubKeyPEM []byte) ([]byte, error) {
 // DecryptWithRSA decrypts data using RSA private key
 func (em *EncryptionManager) DecryptWithRSA(data []byte) ([]byte, error) {
 	return rsa.DecryptOAEP(sha256.New(), rand.Reader, em.rsaKey, data, nil)
+}
+
+// Sign signs data using RSA-SHA256
+func (em *EncryptionManager) Sign(data []byte) ([]byte, error) {
+	hashed := sha256.Sum256(data)
+	return rsa.SignPKCS1v15(rand.Reader, em.rsaKey, crypto.SHA256, hashed[:])
+}
+
+// Verify verifies an RSA-SHA256 signature
+func Verify(data []byte, signature []byte, pubKeyPEM []byte) error {
+	block, _ := pem.Decode(pubKeyPEM)
+	if block == nil {
+		return fmt.Errorf("failed to decode PEM block")
+	}
+
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("not an RSA public key")
+	}
+
+	hashed := sha256.Sum256(data)
+	return rsa.VerifyPKCS1v15(rsaPubKey, crypto.SHA256, hashed[:], signature)
 }

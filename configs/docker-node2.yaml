@@ -1,0 +1,13 @@
+# Docker Node 2 Config
+node_name: "mesh-node-2"
+mesh_ip: "100.64.0.2"
+listen_port: 51820
+log_level: "debug"
+network_name: "docker-mesh"
+network_cidr: "100.64.0.0/16"
+enable_tun: false
+use_tls: false
+auto_discovery: false
+static_peers:
+  - "mesh-node-1:51820"
+coordinators: []

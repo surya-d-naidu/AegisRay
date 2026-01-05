@@ -3,6 +3,7 @@ package mesh
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"sync"
@@ -174,6 +175,15 @@ func (p2p *P2PDiscovery) performHandshake(client pb.MeshServiceClient, address s
 		},
 	}
 
+	// Sign the request
+	// Data to sign: NodeID + MeshIP + NetworkName + Timestamp
+	signData := []byte(joinReq.NodeId + joinReq.MeshIp + joinReq.NetworkName + joinReq.Timestamp.String())
+	signature, err := p2p.node.encryption.Sign(signData)
+	if err != nil {
+		return fmt.Errorf("failed to sign join request: %w", err)
+	}
+	joinReq.Signature = base64.StdEncoding.EncodeToString(signature)
+
 	joinResp, err := client.JoinNetwork(ctx, joinReq)
 	if err != nil {
 		return fmt.Errorf("join network failed: %w", err)
@@ -303,13 +313,14 @@ func (p2p *P2PDiscovery) heartbeatLoop() {
 
 // peerMaintenanceLoop cleans up dead peers and retries connections
 func (p2p *P2PDiscovery) peerMaintenanceLoop() {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 			p2p.maintainPeers()
+			p2p.retryStaticPeers()
 		case <-p2p.stopCh:
 			return
 		}
@@ -379,6 +390,33 @@ func (p2p *P2PDiscovery) maintainPeers() {
 		}
 	}
 	p2p.discoveryMutex.Unlock()
+}
+
+// retryStaticPeers attempts to reconnect to configured static peers if not connected
+func (p2p *P2PDiscovery) retryStaticPeers() {
+	for _, addr := range p2p.staticPeers {
+		connected := false
+
+		// Check if we have an active connection to this address
+		p2p.discoveryMutex.RLock()
+		for id, info := range p2p.discovered {
+			if info.Endpoint == addr {
+				p2p.peerMutex.RLock()
+				_, active := p2p.peerClients[id]
+				p2p.peerMutex.RUnlock()
+
+				if active {
+					connected = true
+					break
+				}
+			}
+		}
+		p2p.discoveryMutex.RUnlock()
+
+		if !connected {
+			go p2p.connectToPeer(addr)
+		}
+	}
 }
 
 // handlePeerFailure handles when a peer becomes unreachable

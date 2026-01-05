@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  mesh-node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    container_name: mesh-node-1
+    hostname: mesh-node-1
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - ./configs/docker-node1.yaml:/app/configs/mesh.yaml:ro
+    networks:
+      - aegis-test
+    command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml"]
+
+  mesh-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    container_name: mesh-node-2
+    hostname: mesh-node-2
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - ./configs/docker-node2.yaml:/app/configs/mesh.yaml:ro
+    networks:
+      - aegis-test
+    depends_on:
+      - mesh-node-1
+    command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml"]
+
+networks:
+  aegis-test:
+    driver: bridge
