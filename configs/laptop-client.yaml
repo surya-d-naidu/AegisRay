@@ -1,0 +1,31 @@
+# -------------------------------------------------------------------
+# 💻 Laptop Client Configuration
+# -------------------------------------------------------------------
+
+# 1. Identity
+node_name: "laptop-user"
+# mesh_ip: "100.64.0.5"   # Optional: Fixed IP. If commented, auto-assign
+
+# 2. Network
+network_name: "aegis-mesh"
+network_cidr: "100.64.0.0/16"
+listen_port: 51820
+api_port: 8083            # Use 8083 to avoid conflict with standard 8080/8082
+
+# 3. Connection to VPS (The Entry Point)
+static_peers:
+  - "raiseds25.com:51820"   # The Public IP and Port of your VPS
+
+# 4. Security
+use_tls: true
+stealth_mode: true
+stealth_domains:
+  - "google.com"
+
+# 5. Routing
+# Set this to true to route all your internet traffic through the VPS
+exit_node: false          
+meshed_traffic_only: false
+
+# 6. Local Interface
+enable_tun: true

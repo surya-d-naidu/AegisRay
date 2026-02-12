@@ -4,12 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aegisray/vpn-tunnel/internal/crypto"
+	"github.com/aegisray/vpn-tunnel/internal/sni"
 	pb "github.com/aegisray/vpn-tunnel/proto/mesh"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
@@ -73,10 +77,18 @@ func (p2p *P2PDiscovery) Start() error {
 	p2p.logger.Info("Starting P2P mesh discovery")
 	p2p.running = true
 
+	// Load discovered peers from storage
+	if err := p2p.LoadPeers(); err != nil {
+		p2p.logger.WithError(err).Warn("Failed to load peer store")
+	}
+
 	// Connect to static peers first
 	if err := p2p.connectToStaticPeers(); err != nil {
 		p2p.logger.WithError(err).Warn("Failed to connect to some static peers")
 	}
+
+	// Connect to known peers
+	p2p.retryKnownPeers()
 
 	// Start background discovery routines
 	go p2p.discoveryLoop()
@@ -96,6 +108,11 @@ func (p2p *P2PDiscovery) Stop() error {
 	p2p.logger.Info("Stopping P2P discovery")
 	p2p.running = false
 	close(p2p.stopCh)
+
+	// Save peers before stopping
+	if err := p2p.SavePeers(); err != nil {
+		p2p.logger.WithError(err).Error("Failed to save peer store")
+	}
 
 	// Disconnect from all peers
 	p2p.peerMutex.Lock()
@@ -131,6 +148,19 @@ func (p2p *P2PDiscovery) connectToPeer(address string) error {
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: true,
 		}
+
+		// Apply SNI Masquerading if Stealth Mode is enabled
+		if p2p.node.config.StealthMode {
+			faker := sni.NewSNIFaker(p2p.node.config.StealthDomains...)
+			fakeSNI := faker.GetRandomFakeSNI()
+
+			// Optional: make it look like a subdomain (e.g., api.google.com)
+			if len(fakeSNI) > 0 {
+				tlsConfig.ServerName = fakeSNI
+				p2p.logger.WithField("fake_sni", fakeSNI).Info("Using SNI masquerading for peer connection")
+			}
+		}
+
 		creds := credentials.NewTLS(tlsConfig)
 		conn, err = grpc.Dial(address, grpc.WithTransportCredentials(creds))
 	} else {
@@ -169,7 +199,7 @@ func (p2p *P2PDiscovery) performHandshake(client pb.MeshServiceClient, address s
 		NetworkName: p2p.node.config.NetworkName,
 		Timestamp:   timestamppb.Now(),
 		ConnectionInfo: &pb.ConnectionInfo{
-			PublicAddress: address,
+			PublicAddress: p2p.node.getPublicAddress(),
 			LocalAddress:  p2p.node.MeshIP.String(),
 			Port:          int32(p2p.node.ListenPort),
 			NatType:       pb.NATType_UNKNOWN,
@@ -234,17 +264,79 @@ func (p2p *P2PDiscovery) performHandshake(client pb.MeshServiceClient, address s
 			Status:       "active",
 		}
 
+		// Fix: If this is the peer we are currently handshaking with, override the endpoint
+		// with the address we actually used to connect. This fixes issues where the server
+		// reports its internal Mesh IP as its public address.
+		if peer.ConnectionInfo.PublicAddress == "" ||
+			strings.HasPrefix(peer.ConnectionInfo.PublicAddress, "100.64.") ||
+			strings.HasPrefix(peer.ConnectionInfo.PublicAddress, "127.0.0.") ||
+			peer.Id == responderPeer.Id {
+			p2p.logger.WithFields(logrus.Fields{
+				"reported": peer.ConnectionInfo.PublicAddress,
+				"actual":   address,
+			}).Info("Overriding peer endpoint with actual connection address")
+			peerInfo.Endpoint = address
+		} else {
+			// Resolve UDP addr from reported string (this was missing before too!)
+			peerInfo.Endpoint = peer.ConnectionInfo.PublicAddress
+		}
+
 		p2p.discoveryMutex.Lock()
 		p2p.discovered[peer.Id] = peerInfo
 		p2p.discoveryMutex.Unlock()
 	}
 
 	p2p.peerMutex.Lock()
-	// Store client for this connection - use the first peer ID from response
-	if len(joinResp.Peers) > 0 {
-		p2p.peerClients[joinResp.Peers[0].Id] = client
+	// Store client for this connection - map it to the actual responder's ID
+	if responderPeer != nil {
+		p2p.peerClients[responderPeer.Id] = client
+	} else if len(joinResp.Peers) > 0 {
+		// Fallback for older nodes or if signature verification wasn't used/required
+		// Try to find the node that claims to be the one we connected to?
+		// For now, use the last one (ourselves is separate, but the responder is usually appended last in JoinNetwork implementation)
+		// Actually, JoinNetwork appends selfPeer last.
+		p2p.peerClients[joinResp.Peers[len(joinResp.Peers)-1].Id] = client
 	}
 	p2p.peerMutex.Unlock()
+
+	// PROMOTE TO MESH NODE PEERS (Fix for "No route to destination")
+	// We need to tell the main node about this peer so it can route packets
+	for _, peer := range joinResp.Peers {
+		if peer.Id == p2p.node.ID {
+			continue // Skip self
+		}
+
+		// Re-resolve endpoint for this specific peer from the list
+		endpoint := peer.ConnectionInfo.PublicAddress
+		if peer.Id == responderPeer.Id {
+			endpoint = address
+		}
+
+		udpAddr, _ := net.ResolveUDPAddr("udp", endpoint)
+
+		// Parse allowed IPs
+		var allowedIPs []*net.IPNet
+		for _, ipStr := range peer.AllowedIps {
+			if _, ipNet, err := net.ParseCIDR(ipStr); err == nil {
+				allowedIPs = append(allowedIPs, ipNet)
+			}
+		}
+
+		// Add to main node
+		nodePeerInfo := &PeerInfo{
+			ID:         peer.Id,
+			PublicKey:  peer.PublicKey,
+			MeshIP:     peer.MeshIp,
+			Endpoint:   udpAddr,
+			AllowedIPs: allowedIPs,
+		}
+
+		if err := p2p.node.AddPeer(nodePeerInfo); err != nil {
+			p2p.logger.WithError(err).Warn("Failed to promote discovered peer to mesh node")
+		} else {
+			p2p.logger.WithField("peer_id", peer.Id).Info("Promoted discovered peer to active mesh peer")
+		}
+	}
 
 	p2p.logger.WithFields(logrus.Fields{
 		"peers_discovered": len(joinResp.Peers),
@@ -344,8 +436,85 @@ func (p2p *P2PDiscovery) peerMaintenanceLoop() {
 		case <-ticker.C:
 			p2p.maintainPeers()
 			p2p.retryStaticPeers()
+			p2p.SavePeers() // Periodically save peers
 		case <-p2p.stopCh:
 			return
+		}
+	}
+}
+
+// LoadPeers loads discovered peers from the peer store file
+func (p2p *P2PDiscovery) LoadPeers() error {
+	path := p2p.node.config.PeerStoreFile
+	if path == "" {
+		return nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var peers map[string]*P2PPeerInfo
+	if err := json.Unmarshal(data, &peers); err != nil {
+		return fmt.Errorf("failed to parse peer store: %w", err)
+	}
+
+	p2p.discoveryMutex.Lock()
+	defer p2p.discoveryMutex.Unlock()
+
+	for id, peer := range peers {
+		// Only load peers that are not already known (though usually map is empty at start)
+		if _, exists := p2p.discovered[id]; !exists {
+			p2p.discovered[id] = peer
+		}
+	}
+
+	p2p.logger.WithField("count", len(peers)).Info("Loaded persistent peers")
+	return nil
+}
+
+// SavePeers saves discovered peers to the peer store file
+func (p2p *P2PDiscovery) SavePeers() error {
+	path := p2p.node.config.PeerStoreFile
+	if path == "" {
+		return nil
+	}
+
+	p2p.discoveryMutex.RLock()
+	peers := make(map[string]*P2PPeerInfo)
+	for id, peer := range p2p.discovered {
+		peers[id] = peer
+	}
+	p2p.discoveryMutex.RUnlock()
+
+	data, err := json.MarshalIndent(peers, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal peers: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write peer store: %w", err)
+	}
+
+	return nil
+}
+
+// retryKnownPeers attempts to connect to all known peers
+func (p2p *P2PDiscovery) retryKnownPeers() {
+	p2p.discoveryMutex.RLock()
+	peers := make([]*P2PPeerInfo, 0, len(p2p.discovered))
+	for _, peer := range p2p.discovered {
+		peers = append(peers, peer)
+	}
+	p2p.discoveryMutex.RUnlock()
+
+	for _, peer := range peers {
+		if peer.Endpoint != "" {
+			go p2p.connectToPeer(peer.Endpoint)
 		}
 	}
 }
@@ -501,4 +670,16 @@ func (p2p *P2PDiscovery) GetPeerClient(peerID string) (pb.MeshServiceClient, boo
 
 	client, exists := p2p.peerClients[peerID]
 	return client, exists
+}
+
+// EnsureConnection ensures we have an outgoing connection to the peer
+func (p2p *P2PDiscovery) EnsureConnection(peerID, address string) {
+	p2p.peerMutex.RLock()
+	_, exists := p2p.peerClients[peerID]
+	p2p.peerMutex.RUnlock()
+
+	if !exists {
+		p2p.logger.WithField("peer_id", peerID).Info("Initiating reverse connection to peer")
+		go p2p.connectToPeer(address)
+	}
 }

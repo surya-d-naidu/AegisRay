@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +16,7 @@ type MeshConfig struct {
 	NodeName   string `yaml:"node_name"`
 	MeshIP     string `yaml:"mesh_ip"`
 	ListenPort int    `yaml:"listen_port"`
+	APIPort    int    `yaml:"api_port"`
 	LogLevel   string `yaml:"log_level"`
 
 	// Network Configuration
@@ -22,9 +25,11 @@ type MeshConfig struct {
 	DNSServers  []string `yaml:"dns_servers"`
 
 	// Security Configuration
-	UseTLS   bool   `yaml:"use_tls"`
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
+	UseTLS          bool   `yaml:"use_tls"`
+	CertFile        string `yaml:"cert_file"`
+	KeyFile         string `yaml:"key_file"`
+	IdentityKeyFile string `yaml:"identity_key_file"`
+	PeerStoreFile   string `yaml:"peer_store_file"`
 
 	// Stealth Configuration
 	StealthMode    bool     `yaml:"stealth_mode"`
@@ -105,6 +110,10 @@ func setMeshConfigDefaults(config *MeshConfig) error {
 		config.ListenPort = 51820 // WireGuard's default port for stealth
 	}
 
+	if config.APIPort == 0 {
+		config.APIPort = 8080 // Default HTTP API port
+	}
+
 	if config.LogLevel == "" {
 		config.LogLevel = "info"
 	}
@@ -154,6 +163,12 @@ func setMeshConfigDefaults(config *MeshConfig) error {
 	}
 	if config.KeyFile == "" {
 		config.KeyFile = "certs/node.key"
+	}
+	if config.IdentityKeyFile == "" {
+		config.IdentityKeyFile = "certs/identity.key"
+	}
+	if config.PeerStoreFile == "" {
+		config.PeerStoreFile = "peers.json"
 	}
 
 	// Enable auto-discovery by default
@@ -222,8 +237,8 @@ func GenerateDefaultMeshConfig() *MeshConfig {
 	return config
 }
 
-// GetNodeMeshIP assigns a mesh IP to this node based on the network CIDR
-func (c *MeshConfig) GetNodeMeshIP() (string, error) {
+// GetNodeMeshIP assigns a mesh IP to this node based on the network CIDR and Node ID
+func (c *MeshConfig) GetNodeMeshIP(nodeID string) (string, error) {
 	if c.MeshIP != "" {
 		return c.MeshIP, nil
 	}
@@ -234,10 +249,43 @@ func (c *MeshConfig) GetNodeMeshIP() (string, error) {
 		return "", fmt.Errorf("invalid network CIDR: %w", err)
 	}
 
-	// Simple IP assignment (in a real implementation, this would be coordinated)
-	ip := network.IP
-	// Increment the last octet by 1 for this node
-	ip[len(ip)-1] += 1
+	// Use SHA256 hash of nodeID to generate deterministic but random IP
+	hash := sha256.Sum256([]byte(nodeID))
+
+	// Convert first 4 bytes of hash to IP offset
+	offset := binary.BigEndian.Uint32(hash[:4])
+
+	// Get the network address and mask size
+	networkAddr := network.IP.To4()
+	if networkAddr == nil {
+		return "", fmt.Errorf("only IPv4 networks supported")
+	}
+
+	ones, bits := network.Mask.Size()
+	if bits != 32 {
+		return "", fmt.Errorf("invalid IPv4 mask")
+	}
+
+	// Calculate available host addresses
+	hostBits := uint32(32 - ones)
+	maxHosts := uint32(1<<hostBits) - 2 // Exclude network and broadcast
+
+	if maxHosts == 0 {
+		return "", fmt.Errorf("network too small for host assignment")
+	}
+
+	// Generate host part (avoid .0 and .1 which are typically reserved)
+	hostPart := (offset % maxHosts) + 2
+	if hostPart >= maxHosts {
+		hostPart = 2
+	}
+
+	// Combine network and host parts
+	networkInt := binary.BigEndian.Uint32(networkAddr)
+	ipInt := networkInt | hostPart
+
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, ipInt)
 
 	c.MeshIP = ip.String()
 	return c.MeshIP, nil

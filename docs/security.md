@@ -24,38 +24,6 @@ The handshake establishes trust and a session key between two nodes. It occurs o
 *   **Signature**: Responder signs the response.
 *   **Action**: Initiator verifies Responder's signature.
 
-### 3. Key Exchange (Initiator -> Responder)
-*   **Generation**: Initiator generates a random 32-byte **AES-256** key (`SessionKey`).
-*   **Encryption**: `EncryptedKey = RSA_Encrypt(Responder_PublicKey, SessionKey)`.
-*   **Signature**: `KeySig = RSA_Sign(Initiator_PrivateKey, EncryptedKey)`.
-*   **Transmission**: Sends `[KeySig] + [EncryptedKey]`.
-*   **Action**: Responder:
-    1.  Verifies `KeySig` using Initiator's Public Key.
-    2.  Decrypts `EncryptedKey` using its Private Key.
-    3.  Installs `SessionKey` for this peer.
-
-## 🛡️ Traffic Encryption
-
-All data traffic (and routing control traffic) is encrypted using **AES-256-GCM**.
-
-*   **Mode**: Galois/Counter Mode (GCM).
-*   **Properties**: Authenticated Encryption with Associated Data (AEAD). Provides both confidentiality and integrity.
-*   **Nonce**: Unique per-packet nonce.
-*   **Scope**: Keys are **Per-Peer**.
-    *   Node A uses `Key_AB` to talk to Node B.
-    *   Node A uses `Key_AC` to talk to Node C.
-    *   If `Key_AB` is compromised, Traffic to C remains secure.
-
-## 🔄 Perfect Forward Secrecy (PFS)
-
-*   **Mechanism**: Periodic Key Rotation.
-*   **Interval**: Every **1 Hour** (Default).
-*   **Process**:
-    1.  Node checks `LastKeyRotation` timestamp for each peer.
-    2.  If `> 1h`, Node generates a *new* Session Key.
-    3.  Performs a fresh **Key Exchange**.
-    4.  Old key is discarded from memory.
-*   **Benefit**: If an attacker steals a node's keys after a session, they cannot decrypt past traffic recorded more than an hour ago.
 
 ## 🚧 Threat Model & Mitigations
 

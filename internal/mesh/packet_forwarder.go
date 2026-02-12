@@ -84,8 +84,12 @@ func (pf *PacketForwarder) Stop() error {
 // ForwardPacket forwards an IP packet through the mesh
 func (pf *PacketForwarder) ForwardPacket(packetData []byte) error {
 	// Parse IP packet
+	// Parse IP packet
 	packet, err := pf.parseIPPacket(packetData)
 	if err != nil {
+		if err.Error() == "ignored ipv6" {
+			return nil
+		}
 		pf.updateStats(func(s *ForwardingStats) { s.PacketsDropped++ })
 		return fmt.Errorf("failed to parse IP packet: %w", err)
 	}
@@ -101,6 +105,12 @@ func (pf *PacketForwarder) ForwardPacket(packetData []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid network CIDR: %w", err)
 	}
+
+	pf.logger.WithFields(logrus.Fields{
+		"src": packet.Source.String(),
+		"dst": packet.Destination.String(),
+		"len": packet.Length,
+	}).Debug("Forwarding IPv4 packet")
 
 	// Check if destination is in mesh network
 	if !networkCIDR.Contains(packet.Destination) {
@@ -120,8 +130,19 @@ func (pf *PacketForwarder) parseIPPacket(data []byte) (*IPPacket, error) {
 
 	// Parse IPv4 header
 	version := data[0] >> 4
+
+	// Ignore IPv6 packets silently
+	if version == 6 {
+		return nil, fmt.Errorf("ignored ipv6")
+	}
+
 	if version != 4 {
-		return nil, fmt.Errorf("unsupported IP version: %d", version)
+		// Log the first few bytes for debugging
+		headerHex := ""
+		if len(data) >= 4 {
+			headerHex = fmt.Sprintf("%x", data[:4])
+		}
+		return nil, fmt.Errorf("unsupported IP version: %d (header: %s)", version, headerHex)
 	}
 
 	packet := &IPPacket{
@@ -170,19 +191,26 @@ func (pf *PacketForwarder) sendPacketToPeer(peerID string, packet *IPPacket) err
 		return fmt.Errorf("peer not connected: %s", peerID)
 	}
 
+	// Encrypt packet
+	encryptedData, err := pf.node.encryption.PeerEncrypt(peerID, packet.Raw)
+	if err != nil {
+		pf.updateStats(func(s *ForwardingStats) { s.PacketsDropped++ })
+		return fmt.Errorf("failed to encrypt packet: %w", err)
+	}
+
 	// Create packet request
 	req := &pb.PacketRequest{
 		SourceId:      pf.node.ID,
 		DestId:        peerID,
 		PacketType:    pb.PacketType_DATA,
-		EncryptedData: packet.Raw,
+		EncryptedData: encryptedData,
 		Timestamp:     timestamppb.New(time.Now()),
 	}
 
 	// Send via gRPC
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := client.SendPacket(ctx, req)
+	_, err = client.SendPacket(ctx, req)
 	if err != nil {
 		pf.updateStats(func(s *ForwardingStats) { s.PacketsDropped++ })
 		return fmt.Errorf("failed to send packet to peer: %w", err)

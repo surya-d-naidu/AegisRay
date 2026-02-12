@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  exit-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    container_name: exit-node
+    hostname: exit-node
+    command: >
+      sh -c "sysctl -w net.ipv4.ip_forward=1 && 
+             iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && 
+             /app/aegisray-mesh --config /app/configs/mesh.yaml"
+    volumes:
+      - ./configs/docker-exit.yaml:/app/configs/mesh.yaml:ro
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
+    user: "0:0"
+    networks:
+      - aegis-exit-test
+    ports:
+      - "8081:8080" # API port
+
+  client-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.mesh
+    container_name: client-node
+    hostname: client-node
+    command: ["/app/aegisray-mesh", "--config", "/app/configs/mesh.yaml"]
+    volumes:
+      - ./configs/docker-client.yaml:/app/configs/mesh.yaml:ro
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    privileged: true
+    user: "0:0"
+    networks:
+      - aegis-exit-test
+    depends_on:
+      - exit-node
+
+  # TARGET SERVICE (Internet Simulation)
+  # We use a simple HTTP server to verify we can reach it via the exit node
+  internet-target:
+    image: nginx:alpine
+    container_name: internet-target
+    hostname: google.com # Pretend to be google.com for fun, or just internet-target
+    networks:
+      - aegis-exit-test
+
+networks:
+  aegis-exit-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.50.0.0/16

@@ -17,6 +17,9 @@ type TUNInterface struct {
 	cidr   *net.IPNet
 	logger *logrus.Logger
 
+	defaultRoute bool
+	mtu          int
+
 	// Packet handling
 	incomingPackets chan []byte
 	outgoingPackets chan []byte
@@ -24,7 +27,7 @@ type TUNInterface struct {
 }
 
 // NewTUNInterface creates a new TUN interface
-func NewTUNInterface(meshIP net.IP, networkCIDR string, logger *logrus.Logger) (*TUNInterface, error) {
+func NewTUNInterface(meshIP net.IP, networkCIDR string, defaultRoute bool, mtu int, logger *logrus.Logger) (*TUNInterface, error) {
 	config := water.Config{
 		DeviceType: water.TUN,
 	}
@@ -53,6 +56,8 @@ func NewTUNInterface(meshIP net.IP, networkCIDR string, logger *logrus.Logger) (
 		iface:           iface,
 		meshIP:          meshIP,
 		cidr:            cidr,
+		defaultRoute:    defaultRoute,
+		mtu:             mtu,
 		logger:          logger,
 		incomingPackets: make(chan []byte, 1000),
 		outgoingPackets: make(chan []byte, 1000),
@@ -130,11 +135,22 @@ func (t *TUNInterface) configureInterface() error {
 func (t *TUNInterface) configureLinux(ifaceName string) error {
 	commands := [][]string{
 		// Set IP address
-		{"ip", "addr", "add", fmt.Sprintf("%s/%d", t.meshIP.String(), 16), "dev", ifaceName},
+		{"ip", "addr", "add", fmt.Sprintf("%s/32", t.meshIP.String()), "dev", ifaceName},
+		// Set MTU
+		{"ip", "link", "set", "dev", ifaceName, "mtu", fmt.Sprintf("%d", t.mtu)},
 		// Bring interface up
 		{"ip", "link", "set", "dev", ifaceName, "up"},
 		// Add route for mesh network
 		{"ip", "route", "add", t.cidr.String(), "dev", ifaceName},
+	}
+
+	if t.defaultRoute {
+		// Route traffic to 0.0.0.0/0 via TUN interface
+		// Use specific routes (0/1 + 128/1) to override default without replacing it
+		commands = append(commands, [][]string{
+			{"ip", "route", "add", "0.0.0.0/1", "dev", ifaceName},
+			{"ip", "route", "add", "128.0.0.0/1", "dev", ifaceName},
+		}...)
 	}
 
 	for _, cmd := range commands {
@@ -152,6 +168,8 @@ func (t *TUNInterface) configureDarwin(ifaceName string) error {
 	commands := [][]string{
 		// Configure interface
 		{"ifconfig", ifaceName, t.meshIP.String(), t.meshIP.String(), "up"},
+		// Set MTU
+		{"ifconfig", ifaceName, "mtu", fmt.Sprintf("%d", t.mtu)},
 		// Add route
 		{"route", "add", "-net", t.cidr.String(), "-interface", ifaceName},
 	}
@@ -171,6 +189,8 @@ func (t *TUNInterface) configureWindows(ifaceName string) error {
 	commands := [][]string{
 		// Set IP address (Windows netsh)
 		{"netsh", "interface", "ip", "set", "address", ifaceName, "static", t.meshIP.String(), "255.255.0.0"},
+		// Set MTU
+		{"netsh", "interface", "ipv4", "set", "subinterface", ifaceName, fmt.Sprintf("mtu=%d", t.mtu), "store=persistent"},
 		// Add route
 		{"route", "add", t.cidr.String(), "mask", "255.255.0.0", t.meshIP.String()},
 	}
@@ -187,7 +207,7 @@ func (t *TUNInterface) configureWindows(ifaceName string) error {
 
 // readPackets reads packets from the TUN interface
 func (t *TUNInterface) readPackets() {
-	buffer := make([]byte, 1500) // MTU size
+	buffer := make([]byte, t.mtu) // MTU size
 
 	for {
 		select {

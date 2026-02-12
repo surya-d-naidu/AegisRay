@@ -1,0 +1,15 @@
+node_name: exit-node
+mesh_ip: 100.64.0.1
+listen_port: 443
+api_port: 8080
+log_level: debug
+network_name: aegis-test
+network_cidr: 100.64.0.0/16
+auto_discovery: true
+enable_tun: true
+use_tls: true
+exit_node: true
+stealth_mode: true
+stealth_domains: ["google.com", "microsoft.com"]
+advertise_routes:
+  - "0.0.0.0/0"

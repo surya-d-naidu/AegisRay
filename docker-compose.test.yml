@@ -11,8 +11,10 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+    user: "0:0"
     volumes:
       - ./configs/docker-node1.yaml:/app/configs/mesh.yaml:ro
+      - /dev/net/tun:/dev/net/tun
     networks:
       - aegis-test
     command: ["./aegisray-mesh", "-config=/app/configs/mesh.yaml"]
@@ -27,8 +29,10 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+    user: "0:0"
     volumes:
       - ./configs/docker-node2.yaml:/app/configs/mesh.yaml:ro
+      - /dev/net/tun:/dev/net/tun
     networks:
       - aegis-test
     depends_on:

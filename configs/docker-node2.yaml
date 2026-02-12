@@ -1,0 +1,13 @@
+node_name: mesh-node-2
+mesh_ip: 100.64.0.2
+listen_port: 51820
+api_port: 8080
+log_level: debug
+network_name: aegis-test
+network_cidr: 100.64.0.0/16
+auto_discovery: true
+static_peers:
+  - "mesh-node-1:51820"
+enable_tun: true
+tun_interface_name: aegis0
+use_tls: false
