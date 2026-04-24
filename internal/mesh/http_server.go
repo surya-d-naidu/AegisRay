@@ -11,21 +11,27 @@ import (
 
 // HTTPServer provides REST API endpoints for mesh status and monitoring
 type HTTPServer struct {
-	node   *MeshNode
-	server *http.Server
-	logger *logrus.Logger
+	node      *MeshNode
+	server    *http.Server
+	logger    *logrus.Logger
+	startedAt time.Time
 }
 
 // NewHTTPServer creates a new HTTP API server
-func NewHTTPServer(node *MeshNode, port int) *HTTPServer {
+func NewHTTPServer(node *MeshNode, bindAddress string, port int) *HTTPServer {
 	mux := http.NewServeMux()
 
 	server := &HTTPServer{
-		node:   node,
-		logger: node.logger,
+		node:      node,
+		logger:    node.logger,
+		startedAt: time.Now(),
 		server: &http.Server{
-			Addr:    fmt.Sprintf(":%d", port),
-			Handler: mux,
+			Addr:              fmt.Sprintf("%s:%d", bindAddress, port),
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      10 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 	}
 
@@ -64,7 +70,7 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":    "healthy",
 		"timestamp": time.Now().UTC(),
 		"node_id":   h.node.ID,
-		"uptime":    time.Since(time.Now()), // TODO: track actual uptime
+		"uptime":    time.Since(h.startedAt).String(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -74,6 +80,11 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // Status endpoint with detailed node information
 func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	h.node.peersMu.RLock()
 	peerCount := len(h.node.peers)
 	peers := make([]map[string]interface{}, 0, peerCount)
@@ -94,7 +105,6 @@ func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"id":          h.node.ID,
 			"mesh_ip":     h.node.MeshIP.String(),
 			"listen_port": h.node.ListenPort,
-			"public_key":  h.node.PublicKey,
 		},
 		"network": map[string]interface{}{
 			"name":       h.node.config.NetworkName,
@@ -121,6 +131,11 @@ func (h *HTTPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // Peers endpoint - simplified peer list
 func (h *HTTPServer) handlePeers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	h.node.peersMu.RLock()
 	peers := make([]map[string]interface{}, 0, len(h.node.peers))
 

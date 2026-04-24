@@ -44,12 +44,16 @@ Ensures connectivity across hostile network boundaries.
 ### 5. Crypto Manager (`internal/crypto/encryption.go`)
 Handles all security operations.
 *   **Algorithms**:
-    *   **Identity**: RSA-2048.
-    *   **Signatures**: RSA-SHA256 (PKCS#1 v1.5).
-    *   **Symmetric**: AES-256-GCM.
+    *   **Identity**: Ed25519.
+    *   **Transport Binding**: Self-signed Ed25519 TLS certificates derived from the same identity key.
+    *   **Session Agreement**: X25519.
+    *   **Symmetric**: XChaCha20-Poly1305.
 *   **Session Management**:
     *   Maintains a `map[peerID]cipher.AEAD`.
     *   Ensures isolation; compromising one session key does not affect others.
+*   **Admission Control**:
+    *   Production nodes require an authorization source before peers are admitted.
+    *   SNI masquerading is used during outbound TLS handshakes to make peer setup look closer to ordinary HTTPS.
 
 ---
 
@@ -60,7 +64,7 @@ Handles all security operations.
 2.  **Lookup**: `MeshNode` checks Routing Table for destination IP.
 3.  **Encryption**: `EncryptionManager` encrypts payload using the Next-Hop Peer's Session Key.
 4.  **Encap**: Wraps encrypted payload in a `MeshPacket` (ProtoBuf).
-5.  **Transport**: Sends via gRPC `StreamPackets` to the peer.
+5.  **Transport**: Sends via the gRPC `SendPacket` RPC to the peer.
 
 ### Inbound Traffic (Mesh -> Local)
 1.  **Receive**: `MeshNode` receives `MeshPacket` via gRPC.

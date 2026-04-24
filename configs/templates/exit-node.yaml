@@ -11,6 +11,12 @@ mesh_ip: "100.64.0.1"        # Exit nodes usually take the .1 address
 listen_port: 51820
 network_name: "aegis-corp"
 
+# Security
+use_tls: true
+stealth_mode: true
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
+
 # The Magic Switch
 exit_node: true              # Advertises 0.0.0.0/0 route to the mesh
 

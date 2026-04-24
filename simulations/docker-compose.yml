@@ -1,5 +1,3 @@
-version: '3.8'
-
 # AegisRay Mesh Network Simulation Environment
 # This creates a complete mesh network with multiple nodes for testing
 
@@ -323,6 +321,20 @@ services:
       - client-bob
     command: ["python3", "/app/chaos/chaos_controller.py"]
 
+  # =============================================================================
+  # Internal iperf3 Server (replaces external iperf.he.net)
+  # =============================================================================
+
+  iperf3-server:
+    image: networkstatic/iperf3:latest
+    container_name: sim-iperf3-server
+    hostname: iperf3-server
+    networks:
+      mesh-sim:
+        ipv4_address: 172.30.1.104
+    command: ["-s"]
+    restart: unless-stopped
+
 volumes:
   monitor-data:
     driver: local
@@ -330,6 +342,7 @@ volumes:
 networks:
   mesh-sim:
     driver: bridge
+    internal: true                   # Air-gapped: no internet access
     ipam:
       driver: default
       config:
@@ -337,4 +350,3 @@ networks:
           gateway: 172.30.1.1
     driver_opts:
       com.docker.network.bridge.enable_icc: "true"
-      com.docker.network.bridge.enable_ip_masquerade: "true"

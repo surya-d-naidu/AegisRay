@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -188,22 +189,27 @@ func (nt *NATTraversal) SendPacket(peerID string, packet []byte) error {
 // Private methods
 
 func (nt *NATTraversal) discoverNetworkConfig() error {
-	// Get local address
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	// In air-gapped / simulation mode (no STUN servers), skip the external
+	// dial entirely and resolve the local address from network interfaces.
+	if len(nt.stunServers) == 0 {
+		localAddr, err := getLocalInterfaceAddr()
+		if err != nil {
+			return fmt.Errorf("failed to get local address in air-gap mode: %w", err)
+		}
+		nt.localAddr = localAddr
+		nt.publicAddr = localAddr
+		nt.logger.Info("Running in air-gap/simulation mode, using local interface address")
+		return nil
+	}
+
+	// Get local address by dialing a STUN server (non-air-gapped path)
+	conn, err := net.Dial("udp", normalizeTraversalEndpoint(nt.stunServers[0]))
 	if err != nil {
 		return fmt.Errorf("failed to get local address: %w", err)
 	}
 	defer conn.Close()
 
 	nt.localAddr = conn.LocalAddr().(*net.UDPAddr)
-
-	// Check if we have STUN servers configured
-	if len(nt.stunServers) == 0 {
-		// Simulation mode - use local address as public address
-		nt.logger.Info("Running in simulation mode, using local address as public address")
-		nt.publicAddr = nt.localAddr
-		return nil
-	}
 
 	// Use STUN to discover public address
 	publicAddr, err := nt.stunDiscovery()
@@ -228,7 +234,7 @@ func (nt *NATTraversal) stunDiscovery() (*net.UDPAddr, error) {
 }
 
 func (nt *NATTraversal) performSTUNRequest(stunServer string) (*net.UDPAddr, error) {
-	addr, err := net.ResolveUDPAddr("udp", stunServer)
+	addr, err := net.ResolveUDPAddr("udp", normalizeTraversalEndpoint(stunServer))
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +316,15 @@ func generateTransactionID() []byte {
 		return id
 	}
 	return id
+}
+
+func normalizeTraversalEndpoint(endpoint string) string {
+	normalized := strings.TrimSpace(endpoint)
+	normalized = strings.TrimPrefix(normalized, "stun://")
+	normalized = strings.TrimPrefix(normalized, "turn://")
+	normalized = strings.TrimPrefix(normalized, "stun:")
+	normalized = strings.TrimPrefix(normalized, "turn:")
+	return normalized
 }
 
 func parseXorMappedAddress(val []byte) (*net.UDPAddr, error) {
@@ -518,7 +533,7 @@ func (nt *NATTraversal) tryTURNRelay(peerID string, peerInfo *PeerConnectionInfo
 		return nil, fmt.Errorf("no TURN servers configured")
 	}
 
-	turnServer := nt.turnServers[0]
+	turnServer := normalizeTraversalEndpoint(nt.turnServers[0])
 	serverAddr, err := net.ResolveUDPAddr("udp", turnServer)
 	if err != nil {
 		// Fallback logic
@@ -684,6 +699,40 @@ func (nt *NATTraversal) handleReceivedPacket(peerID string, packet []byte) {
 	default:
 		nt.logger.Warn("Mesh packet queue full, dropping packet")
 	}
+}
+
+// getLocalInterfaceAddr returns a UDPAddr from the first non-loopback IPv4
+// interface. Used in air-gapped / simulation mode where we cannot dial an
+// external address to discover the local IP.
+func getLocalInterfaceAddr() (*net.UDPAddr, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list interfaces: %w", err)
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+				continue
+			}
+			return &net.UDPAddr{IP: ip, Port: 0}, nil
+		}
+	}
+	return nil, fmt.Errorf("no suitable network interface found")
 }
 
 // Data structures

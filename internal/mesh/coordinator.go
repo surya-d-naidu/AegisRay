@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/surya-d-naidu/AegisRay/internal/certs"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -198,7 +199,16 @@ func (c *Coordinator) testCoordinatorLatency(coordinator string) time.Duration {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS13,
+				VerifyConnection: func(cs tls.ConnectionState) error {
+					if len(cs.PeerCertificates) == 0 {
+						return fmt.Errorf("missing peer certificate")
+					}
+					return certs.ValidatePeerCertificate(cs.PeerCertificates[0])
+				},
+			},
 		},
 	}
 
@@ -280,7 +290,16 @@ func (c *Coordinator) sendHTTPRequest(method, path string, data interface{}) err
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS13,
+				VerifyConnection: func(cs tls.ConnectionState) error {
+					if len(cs.PeerCertificates) == 0 {
+						return fmt.Errorf("missing peer certificate")
+					}
+					return certs.ValidatePeerCertificate(cs.PeerCertificates[0])
+				},
+			},
 		},
 	}
 

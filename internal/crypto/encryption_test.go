@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -10,14 +11,13 @@ import (
 )
 
 func TestNewEncryptionManager(t *testing.T) {
-	// Test creating without existing key
 	em, err := NewEncryptionManager(nil)
 	if err != nil {
 		t.Fatalf("Failed to create encryption manager: %v", err)
 	}
 
-	if em.rsaKey == nil {
-		t.Error("RSA key should be generated")
+	if len(em.identityKey) == 0 {
+		t.Error("Ed25519 key should be generated")
 	}
 
 	if em.peerKeys == nil {
@@ -32,8 +32,6 @@ func TestEncryptionDecryption(t *testing.T) {
 	}
 
 	data := []byte("secret data")
-
-	// Test default encryption
 	encrypted, err := em.Encrypt(data)
 	if err != nil {
 		t.Fatalf("Failed to encrypt: %v", err)
@@ -66,8 +64,6 @@ func TestPeerEncryptionDecryption(t *testing.T) {
 	}
 
 	data := []byte("peer secret data")
-
-	// Test peer encryption
 	encrypted, err := em.PeerEncrypt(peerID, data)
 	if err != nil {
 		t.Fatalf("Failed to encrypt for peer: %v", err)
@@ -76,52 +72,6 @@ func TestPeerEncryptionDecryption(t *testing.T) {
 	decrypted, err := em.PeerDecrypt(peerID, encrypted)
 	if err != nil {
 		t.Fatalf("Failed to decrypt from peer: %v", err)
-	}
-
-	if !bytes.Equal(data, decrypted) {
-		t.Errorf("Decrypted data does not match original. Got %s, want %s", decrypted, data)
-	}
-
-	// Test with unknown peer (should fallback to default or fail depending on implementation)
-	// Current implementation: Fallback to default GCM
-	unknownPeerEncrypted, err := em.PeerEncrypt("unknown-peer", data)
-	if err != nil {
-		t.Fatalf("Failed to encrypt for unknown peer: %v", err)
-	}
-
-	unknownPeerDecrypted, err := em.PeerDecrypt("unknown-peer", unknownPeerEncrypted)
-	if err != nil {
-		t.Fatalf("Failed to decrypt from unknown peer: %v", err)
-	}
-
-	if !bytes.Equal(data, unknownPeerDecrypted) {
-		t.Errorf("Decrypted data (fallback) does not match original")
-	}
-}
-
-func TestRSAEncryptionDecryption(t *testing.T) {
-	em, err := NewEncryptionManager(nil)
-	if err != nil {
-		t.Fatalf("Failed to create encryption manager: %v", err)
-	}
-
-	pubKeyPEM, err := em.GetPublicKeyPEM()
-	if err != nil {
-		t.Fatalf("Failed to get public key PEM: %v", err)
-	}
-
-	data := []byte("rsa secret data")
-
-	// Use standalone function for encryption
-	encrypted, err := EncryptWithRSA(data, pubKeyPEM)
-	if err != nil {
-		t.Fatalf("Failed to encrypt with RSA: %v", err)
-	}
-
-	// Use EM method for decryption
-	decrypted, err := em.DecryptWithRSA(encrypted)
-	if err != nil {
-		t.Fatalf("Failed to decrypt with RSA: %v", err)
 	}
 
 	if !bytes.Equal(data, decrypted) {
@@ -150,10 +100,9 @@ func TestSignVerify(t *testing.T) {
 		t.Errorf("Failed to verify signature: %v", err)
 	}
 
-	// Test invalid signature
 	invalidSignature := make([]byte, len(signature))
 	copy(invalidSignature, signature)
-	invalidSignature[0] ^= 0xFF // Flip bits
+	invalidSignature[0] ^= 0xFF
 
 	if err := Verify(data, invalidSignature, pubKeyPEM); err == nil {
 		t.Error("Verification should have failed with invalid signature")
@@ -161,7 +110,6 @@ func TestSignVerify(t *testing.T) {
 }
 
 func TestIdentityPersistence(t *testing.T) {
-	// Create a temporary directory
 	tempDir, err := os.MkdirTemp("", "aegisray-test")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -170,7 +118,6 @@ func TestIdentityPersistence(t *testing.T) {
 
 	keyPath := filepath.Join(tempDir, "identity.key")
 
-	// 1. Generate and save a key
 	em, err := NewEncryptionManager(nil)
 	if err != nil {
 		t.Fatalf("Failed to create encryption manager: %v", err)
@@ -181,18 +128,15 @@ func TestIdentityPersistence(t *testing.T) {
 		t.Fatalf("Failed to save identity key: %v", err)
 	}
 
-	// 2. Load the key back
 	loadedKey, err := LoadIdentityKey(keyPath)
 	if err != nil {
 		t.Fatalf("Failed to load identity key: %v", err)
 	}
 
-	// 3. Compare keys (simple comparison of modulus)
-	if privKey.N.Cmp(loadedKey.N) != 0 {
+	if !bytes.Equal(privKey, loadedKey) {
 		t.Error("Loaded key does not match saved key")
 	}
 
-	// 4. Test loading non-existent key
 	_, err = LoadIdentityKey(filepath.Join(tempDir, "nonexistent.key"))
 	if err == nil {
 		t.Error("Should fail to load non-existent key")
@@ -203,7 +147,6 @@ func TestIdentityPersistence(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
-	// Generate a shared key
 	key, err := GenerateSharedKey()
 	if err != nil {
 		t.Fatalf("Failed to generate shared key: %v", err)
@@ -213,7 +156,6 @@ func TestKeys(t *testing.T) {
 	}
 }
 
-// verifyPEMBlock is a helper to verify PEM encoding
 func TestGetPublicKeyPEMStructure(t *testing.T) {
 	em, err := NewEncryptionManager(nil)
 	if err != nil {
@@ -236,8 +178,11 @@ func TestGetPublicKeyPEMStructure(t *testing.T) {
 		t.Errorf("Unexpected PEM type: %s", block.Type)
 	}
 
-	_, err = x509.ParsePKIXPublicKey(block.Bytes)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		t.Fatalf("Failed to parse RSA public key from PEM: %v", err)
+		t.Fatalf("Failed to parse public key from PEM: %v", err)
+	}
+	if _, ok := publicKey.(ed25519.PublicKey); !ok {
+		t.Fatalf("Parsed public key is not Ed25519")
 	}
 }

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/aegisray/vpn-tunnel/proto/mesh"
 	"github.com/sirupsen/logrus"
+	pb "github.com/surya-d-naidu/AegisRay/proto/mesh"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

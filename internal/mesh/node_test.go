@@ -1,12 +1,24 @@
 package mesh
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/aegisray/vpn-tunnel/internal/config"
-	"github.com/aegisray/vpn-tunnel/internal/crypto"
+	"github.com/surya-d-naidu/AegisRay/internal/certs"
+	"github.com/surya-d-naidu/AegisRay/internal/config"
+	"github.com/surya-d-naidu/AegisRay/internal/crypto"
+	pb "github.com/surya-d-naidu/AegisRay/proto/mesh"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestNewMeshNode_IdentityPersistence(t *testing.T) {
@@ -26,6 +38,7 @@ func TestNewMeshNode_IdentityPersistence(t *testing.T) {
 		APIPort:         0,
 		LogLevel:        "error",
 		NetworkCIDR:     "100.64.0.0/16",
+		AllowUnauthenticated: true,
 	}
 
 	// 1. Create first node instance - should generate and save key
@@ -79,4 +92,208 @@ func TestGenerateNodeID(t *testing.T) {
 	if len(id1) != 32 { // 16 bytes hex encoded = 32 chars
 		t.Errorf("Node ID length mismatch. Got %d, want 32", len(id1))
 	}
+}
+
+func TestVerifyEstablishedPeerIdentityMatchesTransportCertificate(t *testing.T) {
+	ctx, peerID, publicKey := testPeerContext(t)
+	node := newTLSMeshNodeForTest(t)
+	node.peers[peerID] = &Peer{ID: peerID, PublicKey: publicKey}
+
+	if err := node.verifyEstablishedPeerIdentity(ctx, peerID); err != nil {
+		t.Fatalf("expected transport identity to verify, got %v", err)
+	}
+}
+
+func TestVerifyEstablishedPeerIdentityRejectsSpoofedNodeID(t *testing.T) {
+	ctx, _, _ := testPeerContext(t)
+	node := newTLSMeshNodeForTest(t)
+
+	if err := node.verifyEstablishedPeerIdentity(ctx, "spoofed-node-id"); err == nil {
+		t.Fatal("expected spoofed node id to be rejected")
+	}
+}
+
+func TestDiscoverPeersAllowsPeerWithoutEndpoint(t *testing.T) {
+	ctx, requesterID, requesterKey := testPeerContext(t)
+	node := newTLSMeshNodeForTest(t)
+	node.peers[requesterID] = &Peer{
+		ID:        requesterID,
+		PublicKey: requesterKey,
+		MeshIP:    net.ParseIP("10.0.0.2"),
+	}
+	node.peers["peer-without-endpoint"] = &Peer{
+		ID:        "peer-without-endpoint",
+		PublicKey: requesterKey,
+		MeshIP:    net.ParseIP("10.0.0.3"),
+	}
+
+	resp, err := node.DiscoverPeers(ctx, &pb.DiscoveryRequest{
+		NodeId:      requesterID,
+		NetworkName: node.config.NetworkName,
+		MaxPeers:    10,
+	})
+	if err != nil {
+		t.Fatalf("discover peers failed: %v", err)
+	}
+
+	foundNilEndpointPeer := false
+	for _, peerInfo := range resp.Peers {
+		if peerInfo.Id != "peer-without-endpoint" {
+			continue
+		}
+		foundNilEndpointPeer = true
+		if peerInfo.ConnectionInfo.PublicAddress != "" {
+			t.Fatalf("expected empty public address, got %q", peerInfo.ConnectionInfo.PublicAddress)
+		}
+		if peerInfo.ConnectionInfo.Port != 0 {
+			t.Fatalf("expected zero port, got %d", peerInfo.ConnectionInfo.Port)
+		}
+	}
+
+	if !foundNilEndpointPeer {
+		t.Fatal("expected discovered peer without endpoint to be included")
+	}
+}
+
+func TestRequestIntroductionRejectsTargetWithoutEndpoint(t *testing.T) {
+	ctx, requesterID, requesterKey := testPeerContext(t)
+	node := newTLSMeshNodeForTest(t)
+	node.peers[requesterID] = &Peer{
+		ID:        requesterID,
+		PublicKey: requesterKey,
+		MeshIP:    net.ParseIP("10.0.0.2"),
+	}
+	node.peers["target-peer"] = &Peer{
+		ID:        "target-peer",
+		PublicKey: requesterKey,
+		MeshIP:    net.ParseIP("10.0.0.3"),
+	}
+
+	resp, err := node.RequestIntroduction(ctx, &pb.IntroductionRequest{
+		RequesterId: requesterID,
+		TargetId:    "target-peer",
+		Timestamp:   timestamppb.Now(),
+	})
+	if err != nil {
+		t.Fatalf("request introduction failed: %v", err)
+	}
+	if resp.Success {
+		t.Fatal("expected introduction to fail when target endpoint is missing")
+	}
+}
+
+func TestStreamPacketsReturnsUnimplemented(t *testing.T) {
+	node := newTLSMeshNodeForTest(t)
+
+	err := node.StreamPackets(testStreamPacketsServer{ctx: context.Background()})
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("expected unimplemented status, got %v", err)
+	}
+}
+
+func newTLSMeshNodeForTest(t *testing.T) *MeshNode {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	node, err := NewMeshNode(&config.MeshConfig{
+		NodeName:        "node-under-test",
+		ListenPort:      51820,
+		APIPort:         8080,
+		MeshIP:          "10.0.0.1",
+		NetworkName:     "test-net",
+		NetworkCIDR:     "10.0.0.0/24",
+		LogLevel:        "error",
+		EnableTUN:       false,
+		UseTLS:          true,
+		AutoDiscovery:   false,
+		AllowUnauthenticated: true,
+		IdentityKeyFile: filepath.Join(tempDir, "identity.key"),
+		CertFile:        filepath.Join(tempDir, "node.crt"),
+		KeyFile:         filepath.Join(tempDir, "node.key"),
+		PeerStoreFile:   filepath.Join(tempDir, "peers.json"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create test node: %v", err)
+	}
+	return node
+}
+
+func testPeerContext(t *testing.T) (context.Context, string, string) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	encryption, err := crypto.NewEncryptionManager(nil)
+	if err != nil {
+		t.Fatalf("failed to create encryption manager: %v", err)
+	}
+
+	certMgr := certs.NewCertificateManager(
+		filepath.Join(tempDir, "peer.crt"),
+		filepath.Join(tempDir, "peer.key"),
+		encryption.GetPrivateKey(),
+	)
+
+	tlsCert, err := certMgr.LoadOrGenerateCertificate([]string{"127.0.0.1"})
+	if err != nil {
+		t.Fatalf("failed to generate peer certificate: %v", err)
+	}
+	if len(tlsCert.Certificate) == 0 {
+		t.Fatal("expected certificate bytes")
+	}
+
+	cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+	if err != nil {
+		t.Fatalf("failed to parse peer certificate: %v", err)
+	}
+
+	publicKey, err := encryption.GetPublicKeyPEM()
+	if err != nil {
+		t.Fatalf("failed to get peer public key: %v", err)
+	}
+
+	nodeID := generateNodeID(string(publicKey))
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		AuthInfo: credentials.TLSInfo{
+			State: tls.ConnectionState{
+				PeerCertificates: []*x509.Certificate{cert},
+			},
+		},
+	})
+
+	return ctx, nodeID, string(publicKey)
+}
+
+type testStreamPacketsServer struct {
+	pb.MeshService_StreamPacketsServer
+	ctx context.Context
+}
+
+func (s testStreamPacketsServer) Context() context.Context {
+	return s.ctx
+}
+
+func (s testStreamPacketsServer) Send(*pb.StreamPacket) error {
+	return nil
+}
+
+func (s testStreamPacketsServer) Recv() (*pb.StreamPacket, error) {
+	return nil, nil
+}
+
+func (s testStreamPacketsServer) SendHeader(metadata.MD) error {
+	return nil
+}
+
+func (s testStreamPacketsServer) SetHeader(metadata.MD) error {
+	return nil
+}
+
+func (s testStreamPacketsServer) SetTrailer(metadata.MD) {}
+
+func (s testStreamPacketsServer) SendMsg(any) error {
+	return nil
+}
+
+func (s testStreamPacketsServer) RecvMsg(any) error {
+	return nil
 }

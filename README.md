@@ -1,21 +1,21 @@
 # 🛡️ AegisRay: Ultra-Stealth Mesh VPN
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Security](https://img.shields.io/badge/Security-Strict-success?style=flat&logo=googlesheets)](/internal/crypto)
 [![Network](https://img.shields.io/badge/Topology-Mesh-blueviolet?style=flat&logo=pypy)](/internal/mesh)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**AegisRay** is a production-grade, cryptographically secure P2P mesh VPN designed to operate in hostile network environments. It leverages multi-hop routing and SNI masquerading to traverse deep packet inspection (DPI) firewalls while maintaining absolute zero-trust privacy between peers.
+**AegisRay** is a security-focused P2P mesh VPN for hostile network environments. It uses mutual TLS, signed peer authorization, multi-hop routing, and SNI masquerading on TLS handshakes to reduce fingerprinting while maintaining zero-trust peer admission.
 
 ---
 
 ## 🚀 Why AegisRay?
 
-*   **👻 Invisible to DPI**: Traffic disguises itself as standard HTTPS web browsing (e.g., to `cloudflare.com` or `google.com`) using SNI Masquerading.
+*   **👻 Stealth-Oriented Transport**: TLS handshakes can use SNI masquerading so peer connections resemble ordinary HTTPS setup to allowed domains such as `cloudflare.com` or `google.com`.
 *   **🕸️ True Decentralization**: No central coordination server. Steps are fully autonomous using Distributed Hash Table (DHT) principles and gossip protocols.
-*   **🔒 Military-Grade Crypto**:
-    *   **Identity**: RSA-2048 identity keys bound to SHA-256 Node IDs.
-    *   **Transport**: AES-256-GCM session keys, rotated automatically every hour.
-    *   **Integrity**: RSA signatures on every Route Advertisement and Handshake.
+*   **🔒 Modern Crypto**:
+    *   **Identity**: Ed25519 identity keys bound to SHA-256-derived Node IDs.
+    *   **Transport Authentication**: Self-signed Ed25519 TLS certificates bound to the same identity key.
+    *   **Session Keys**: X25519 key agreement with XChaCha20-Poly1305 peer encryption.
 
 ---
 
@@ -25,6 +25,8 @@ For deep dives into specific topics, check out our detailed documentation:
 - **[📖 Configuration Guide](docs/configuration.md)**: Templates for Peering, Gateways, and Exit Nodes.
 - **[🏗️ System Architecture](docs/architecture.md)**: How MeshNode, Router, and P2P layers interact.
 - **[🔐 Security Model](docs/security.md)**: Cryptographic audits, Handshake flows, and Threat models.
+- **[🗝️ Trust Operations](docs/trust.md)**: Generate trust roots, sign peer bundles, and manage admission.
+- **[✅ Validation Guide](docs/validation.md)**: Runtime checks for smoke validation and production sign-off.
 - **[🚀 Deployment & Tuning](docs/deployment.md)**: Docker, Systemd, and Kernel optimizations.
 
 ---
@@ -46,7 +48,7 @@ AegisRay creates a virtual overlay network.
 
 ### Prerequisites
 *   **Docker** (Recommended for testing)
-*   **Go 1.21+** (For building from source)
+*   **Go 1.24+** (For building from source)
 *   **Linux** (Kernel 5.6+ with WireGuard modules for TUN support)
 
 ### 🧪 Run the Simulation
@@ -68,7 +70,7 @@ docker compose -f docker-compose.test.yml up --build
 # Build the binary
 make build
 
-# Run with a template config
+# Run with a template config after adding trust_root_public_key_file and authorized_peers_file
 sudo ./bin/aegisray-mesh -config=configs/templates/basic-peer.yaml
 ```
 
@@ -102,10 +104,10 @@ sudo ./bin/aegisray-mesh -config=configs/templates/basic-peer.yaml
 ## 🛡️ Security Audit
 
 AegisRay follows a **Zero-Trust** model.
-1.  **Join Request**: A new node sends a signed request.
-2.  **Verification**: The receiving peer verifies the signature against the public key `ID`.
-3.  **Key Exchange**: An ephemeral AES session key is generated, encrypted with the target's RSA Public Key, and sent back.
-4.  **Session-Lock**: All subsequent data packets use this unique AES key.
+1.  **Admission**: A node must present a TLS certificate whose Ed25519 public key matches its claimed mesh identity.
+2.  **Authorization**: The peer must also appear in an operator-provided trust bundle or explicit authorized key list.
+3.  **Key Exchange**: Peers derive per-peer session keys using X25519.
+4.  **Session-Lock**: Data packets are encrypted per peer, and route advertisements are signed.
 
 ---
 

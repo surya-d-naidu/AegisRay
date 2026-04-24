@@ -21,6 +21,8 @@ use_tls: true
 stealth_mode: true
 stealth_domains:
   - "google.com"
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
 
 # 5. Routing
 # Set this to true to route all your internet traffic through the VPS

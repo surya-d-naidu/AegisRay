@@ -1,11 +1,10 @@
 package crypto
 
 import (
-	"crypto"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
@@ -18,27 +17,28 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// EncryptionManager handles encryption/decryption for multiple peers
+// EncryptionManager handles encryption/decryption for multiple peers.
+// Identity is Ed25519, while per-peer session keys use X25519 + XChaCha20-Poly1305.
 type EncryptionManager struct {
-	rsaKey   *rsa.PrivateKey
-	peerKeys map[string]cipher.AEAD
-	mu       sync.RWMutex
+	identityKey       ed25519.PrivateKey
+	identityPublicKey ed25519.PublicKey
+	peerKeys          map[string]cipher.AEAD
+	mu                sync.RWMutex
 
 	// Default key for backward compatibility or broadcast
 	defaultAEAD cipher.AEAD
 }
 
-// NewEncryptionManager creates a new encryption manager with an optional RSA key
-func NewEncryptionManager(rsaKey *rsa.PrivateKey) (*EncryptionManager, error) {
-	if rsaKey == nil {
-		var err error
-		rsaKey, err = rsa.GenerateKey(rand.Reader, 2048)
+// NewEncryptionManager creates a new encryption manager with an optional Ed25519 identity key.
+func NewEncryptionManager(identityKey ed25519.PrivateKey) (*EncryptionManager, error) {
+	if len(identityKey) == 0 {
+		_, generatedKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+			return nil, fmt.Errorf("failed to generate Ed25519 key: %w", err)
 		}
+		identityKey = generatedKey
 	}
 
-	// Create a default XChaCha20-Poly1305 key
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := rand.Read(key); err != nil {
 		return nil, fmt.Errorf("failed to generate default key: %w", err)
@@ -50,13 +50,14 @@ func NewEncryptionManager(rsaKey *rsa.PrivateKey) (*EncryptionManager, error) {
 	}
 
 	return &EncryptionManager{
-		rsaKey:      rsaKey,
-		peerKeys:    make(map[string]cipher.AEAD),
-		defaultAEAD: aead,
+		identityKey:       identityKey,
+		identityPublicKey: identityKey.Public().(ed25519.PublicKey),
+		peerKeys:          make(map[string]cipher.AEAD),
+		defaultAEAD:       aead,
 	}, nil
 }
 
-// GenerateSharedKey creates a random key for XChaCha20-Poly1305
+// GenerateSharedKey creates a random key for XChaCha20-Poly1305.
 func GenerateSharedKey() ([]byte, error) {
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := rand.Read(key); err != nil {
@@ -65,15 +66,12 @@ func GenerateSharedKey() ([]byte, error) {
 	return key, nil
 }
 
-// SetPeerKey sets a session key for a specific peer
+// SetPeerKey sets a session key for a specific peer.
 func (em *EncryptionManager) SetPeerKey(peerID string, key []byte) error {
-	// If key is not 32 bytes (KeySize), we might have an issue.
-	// But let's check explicit KeySize constant.
 	if len(key) != chacha20poly1305.KeySize {
 		return fmt.Errorf("key must be %d bytes", chacha20poly1305.KeySize)
 	}
 
-	// Use XChaCha20-Poly1305 for extended nonce support (192-bit) which is safer for random nonces
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return fmt.Errorf("failed to create XChaCha20-Poly1305 for peer %s: %w", peerID, err)
@@ -85,14 +83,13 @@ func (em *EncryptionManager) SetPeerKey(peerID string, key []byte) error {
 	return nil
 }
 
-// PeerEncrypt encrypts data for a specific peer using their session key
+// PeerEncrypt encrypts data for a specific peer using their session key.
 func (em *EncryptionManager) PeerEncrypt(peerID string, data []byte) ([]byte, error) {
 	em.mu.RLock()
 	aead, exists := em.peerKeys[peerID]
 	em.mu.RUnlock()
 
 	if !exists {
-		// Fallback to default AEAD if no specific key for the peer
 		return em.Encrypt(data)
 	}
 
@@ -105,14 +102,13 @@ func (em *EncryptionManager) PeerEncrypt(peerID string, data []byte) ([]byte, er
 	return ciphertext, nil
 }
 
-// PeerDecrypt decrypts data from a specific peer using their session key
+// PeerDecrypt decrypts data from a specific peer using their session key.
 func (em *EncryptionManager) PeerDecrypt(peerID string, data []byte) ([]byte, error) {
 	em.mu.RLock()
 	aead, exists := em.peerKeys[peerID]
 	em.mu.RUnlock()
 
 	if !exists {
-		// Fallback to default AEAD if no specific key for the peer
 		return em.Decrypt(data)
 	}
 
@@ -129,7 +125,7 @@ func (em *EncryptionManager) PeerDecrypt(peerID string, data []byte) ([]byte, er
 	return plaintext, nil
 }
 
-// Encrypt encrypts data using the default XChaCha20-Poly1305 key
+// Encrypt encrypts data using the default XChaCha20-Poly1305 key.
 func (em *EncryptionManager) Encrypt(data []byte) ([]byte, error) {
 	nonce := make([]byte, em.defaultAEAD.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
@@ -140,7 +136,7 @@ func (em *EncryptionManager) Encrypt(data []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-// Decrypt decrypts data using the default XChaCha20-Poly1305 key
+// Decrypt decrypts data using the default XChaCha20-Poly1305 key.
 func (em *EncryptionManager) Decrypt(data []byte) ([]byte, error) {
 	if len(data) < em.defaultAEAD.NonceSize() {
 		return nil, fmt.Errorf("ciphertext too short for default decryption")
@@ -155,105 +151,101 @@ func (em *EncryptionManager) Decrypt(data []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// GetPrivateKey returns the RSA private key
-func (em *EncryptionManager) GetPrivateKey() *rsa.PrivateKey {
-	return em.rsaKey
+// GetPrivateKey returns the Ed25519 private key.
+func (em *EncryptionManager) GetPrivateKey() ed25519.PrivateKey {
+	return em.identityKey
 }
 
-// GetPublicKeyPEM returns the RSA public key in PEM format
+// GetPublicKeyPEM returns the Ed25519 public key in PKIX PEM format.
 func (em *EncryptionManager) GetPublicKeyPEM() ([]byte, error) {
-	pubKey := &em.rsaKey.PublicKey
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	return PublicKeyPEM(em.identityPublicKey)
+}
+
+// PublicKeyPEM converts a public key into PKIX PEM format.
+func PublicKeyPEM(publicKey any) ([]byte, error) {
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key: %w", err)
 	}
 
-	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+	return pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: pubKeyBytes,
-	})
-
-	return pubKeyPEM, nil
+	}), nil
 }
 
-// EncryptWithRSA encrypts data using RSA public key
-func EncryptWithRSA(data []byte, pubKeyPEM []byte) ([]byte, error) {
-	block, _ := pem.Decode(pubKeyPEM)
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block")
-	}
-
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("not an RSA public key")
-	}
-
-	return rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, data, nil)
-}
-
-// DecryptWithRSA decrypts data using RSA private key
-func (em *EncryptionManager) DecryptWithRSA(data []byte) ([]byte, error) {
-	return rsa.DecryptOAEP(sha256.New(), rand.Reader, em.rsaKey, data, nil)
-}
-
-// Sign signs data using RSA-SHA256
-func (em *EncryptionManager) Sign(data []byte) ([]byte, error) {
-	hashed := sha256.Sum256(data)
-	return rsa.SignPKCS1v15(rand.Reader, em.rsaKey, crypto.SHA256, hashed[:])
-}
-
-// Verify verifies an RSA-SHA256 signature
+// Verify verifies an Ed25519 signature over the provided data.
 func Verify(data []byte, signature []byte, pubKeyPEM []byte) error {
 	block, _ := pem.Decode(pubKeyPEM)
 	if block == nil {
 		return fmt.Errorf("failed to decode PEM block")
 	}
 
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	publicKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return fmt.Errorf("failed to parse public key: %w", err)
 	}
 
-	rsaPubKey, ok := pubKey.(*rsa.PublicKey)
+	edPublicKey, ok := publicKey.(ed25519.PublicKey)
 	if !ok {
-		return fmt.Errorf("not an RSA public key")
+		return fmt.Errorf("not an Ed25519 public key")
 	}
 
-	hashed := sha256.Sum256(data)
-	return rsa.VerifyPKCS1v15(rsaPubKey, crypto.SHA256, hashed[:], signature)
+	if !ed25519.Verify(edPublicKey, data, signature) {
+		return fmt.Errorf("signature verification failed")
+	}
+
+	return nil
 }
 
-// LoadIdentityKey loads an RSA private key from a PEM file
-func LoadIdentityKey(path string) (*rsa.PrivateKey, error) {
+// Sign signs data using the long-term Ed25519 identity key.
+func (em *EncryptionManager) Sign(data []byte) ([]byte, error) {
+	return ed25519.Sign(em.identityKey, data), nil
+}
+
+// LoadIdentityKey loads an Ed25519 private key from a PKCS8 PEM file.
+func LoadIdentityKey(path string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
 	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
+	if block == nil {
 		return nil, fmt.Errorf("invalid private key PEM")
 	}
 
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	if block.Type != "PRIVATE KEY" {
+		return nil, fmt.Errorf("unsupported identity key type %q: rotate to Ed25519 PKCS8", block.Type)
+	}
+
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	edPrivateKey, ok := privateKey.(ed25519.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("identity key is not Ed25519")
+	}
+
+	return edPrivateKey, nil
 }
 
-// SaveIdentityKey saves an RSA private key to a PEM file
-func SaveIdentityKey(rsaKey *rsa.PrivateKey, path string) error {
-	// Create directory if it doesn't exist
+// SaveIdentityKey saves an Ed25519 private key to a PKCS8 PEM file.
+func SaveIdentityKey(identityKey ed25519.PrivateKey, path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create directory for identity key: %w", err)
 	}
 
-	keyBytes := x509.MarshalPKCS1PrivateKey(rsaKey)
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(identityKey)
+	if err != nil {
+		return fmt.Errorf("failed to marshal identity key: %w", err)
+	}
+
 	block := &pem.Block{
-		Type:  "RSA PRIVATE KEY",
+		Type:  "PRIVATE KEY",
 		Bytes: keyBytes,
 	}
 
@@ -270,7 +262,21 @@ func SaveIdentityKey(rsaKey *rsa.PrivateKey, path string) error {
 	return nil
 }
 
-// GenerateEphemeralKey generates an X25519 key pair for ECDH
+// PublicKeyPEMFromCertificate extracts the leaf certificate public key as PKIX PEM.
+func PublicKeyPEMFromCertificate(cert *x509.Certificate) ([]byte, error) {
+	if cert == nil {
+		return nil, fmt.Errorf("certificate is nil")
+	}
+	return PublicKeyPEM(cert.PublicKey)
+}
+
+// PublicKeyFingerprint returns a stable SHA-256 fingerprint of the PEM public key.
+func PublicKeyFingerprint(pubKeyPEM []byte) string {
+	sum := sha256.Sum256(pubKeyPEM)
+	return fmt.Sprintf("%x", sum[:])
+}
+
+// GenerateEphemeralKey generates an X25519 key pair for ECDH.
 func GenerateEphemeralKey() (*ecdh.PrivateKey, []byte, error) {
 	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
@@ -279,8 +285,7 @@ func GenerateEphemeralKey() (*ecdh.PrivateKey, []byte, error) {
 	return key, key.PublicKey().Bytes(), nil
 }
 
-// DeriveSharedKey performs an ECDH key exchange with a remote public key
-// and returns the shared secret hashed with SHA-256 for use as a session key.
+// DeriveSharedKey performs an X25519 exchange and derives a session key for XChaCha20-Poly1305.
 func DeriveSharedKey(priv *ecdh.PrivateKey, peerPubKeyBytes []byte) ([]byte, error) {
 	peerPubKey, err := ecdh.X25519().NewPublicKey(peerPubKeyBytes)
 	if err != nil {
@@ -292,7 +297,6 @@ func DeriveSharedKey(priv *ecdh.PrivateKey, peerPubKeyBytes []byte) ([]byte, err
 		return nil, fmt.Errorf("ECDH failed: %w", err)
 	}
 
-	// Always hash the shared secret to derive a key of correct length and properties.
 	hash := sha256.Sum256(sharedSecret)
 	return hash[:], nil
 }

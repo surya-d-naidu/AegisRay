@@ -154,6 +154,25 @@ func TestValidateMeshConfig(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "Mismatched Trust Files",
+			config: &MeshConfig{
+				ListenPort:             51820,
+				MTU:                    1420,
+				TrustRootPublicKeyFile: "root.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Unauthenticated Mode Cannot Mix With Trust Settings",
+			config: &MeshConfig{
+				ListenPort:             51820,
+				MTU:                    1420,
+				AllowUnauthenticated:   true,
+				AuthorizedPeerKeys:     []string{"fake-key"},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

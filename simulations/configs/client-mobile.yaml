@@ -9,14 +9,13 @@ log_level: "info"
 # Network Configuration
 network_name: "sim-network"
 network_cidr: "100.64.0.0/16"
-dns_servers:
-  - "8.8.8.8"                     # Google DNS (reliable for mobile)
-  - "8.8.4.4"
+dns_servers: []                    # Air-gapped: no external DNS
 
 # Security Configuration
 use_tls: true
 cert_file: "/app/certs/server.crt"
 key_file: "/app/certs/server.key"
+allow_unauthenticated_peers: true
 
 # Stealth Configuration (Mobile optimized)
 stealth_mode: true
@@ -35,9 +34,7 @@ discovery_interval: 60             # Longer intervals for battery
 static_peers: []                   # Rely on auto-discovery
 
 # NAT Traversal (Cellular networks)
-stun_servers:
-  - "stun:stun.l.google.com:19302"
-  - "stun:stun1.l.google.com:19302"
+stun_servers: []                   # Air-gapped: no external STUN
 turn_servers: []
 upnp_enabled: false                # Not available on mobile
 

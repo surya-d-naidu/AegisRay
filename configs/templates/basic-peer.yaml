@@ -18,6 +18,9 @@ stealth_mode: true
 stealth_domains:
   - "cloudflare.com"
   - "google.com"
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
+# allow_unauthenticated_peers: true   # Lab only. Do not use for production.
 
 # Discovery
 auto_discovery: true         # Enable Gossip Protocol

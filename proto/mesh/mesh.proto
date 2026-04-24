@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package aegisray.mesh;
 
-option go_package = "github.com/aegisray/vpn-tunnel/proto/mesh";
+option go_package = "github.com/surya-d-naidu/AegisRay/proto/mesh";
 
 import "google/protobuf/timestamp.proto";
 

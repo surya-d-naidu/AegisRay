@@ -1,9 +1,10 @@
-.PHONY: build clean proto server client mesh install deps
+.PHONY: build clean proto mesh trustctl validate-smoke install-proto deps setup test run-mesh run-exit-node help
 
 # Build all components
 build: proto
 	@echo "Building AegisRay..."
 	go build -o bin/aegisray-mesh cmd/mesh/main.go
+	go build -o bin/aegisray-trust cmd/trust/main.go
 	@echo "Build complete. Binary in bin/"
 
 # Install dependencies
@@ -24,6 +25,18 @@ proto:
 mesh: proto
 	go build -o bin/aegisray-mesh cmd/mesh/main.go
 
+trustctl:
+	go build -o bin/aegisray-trust cmd/trust/main.go
+
+validate-smoke:
+	python3 scripts/validate_mesh_deployment.py \
+		--compose-file docker-compose.test.yml \
+		--startup \
+		--teardown \
+		--timeout 120 \
+		--service mesh-node-1:1:8080 \
+		--service mesh-node-2:1:8080
+
 # Install protoc plugins
 install-proto:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -35,18 +48,14 @@ setup: install-proto deps
 	mkdir -p bin
 	@echo "Setup complete!"
 
+# Run tests
+test:
+	GOCACHE=/tmp/aegisray-gocache go test ./...
+
 # Clean build artifacts
 clean:
 	rm -rf bin/
 	go clean
-
-# Run server
-run-server:
-	sudo ./bin/aegisray-server -config=configs/server.yaml
-
-# Run client
-run-client:
-	sudo ./bin/aegisray-client -config=configs/client.yaml
 
 # Run mesh node
 run-mesh:
@@ -59,16 +68,15 @@ run-exit-node:
 # Help
 help:
 	@echo "Available commands:"
-	@echo "  build         - Build all components (server, client, mesh)"
-	@echo "  server        - Build server only"
-	@echo "  client        - Build client only"
+	@echo "  build         - Build the mesh binary"
 	@echo "  mesh          - Build mesh node only"
+	@echo "  trustctl      - Build trust bundle tooling"
+	@echo "  validate-smoke - Run docker-compose smoke validation"
 	@echo "  proto         - Generate protobuf files"
 	@echo "  deps          - Install Go dependencies"
 	@echo "  setup         - Setup development environment"
+	@echo "  test          - Run Go tests with a writable cache"
 	@echo "  clean         - Clean build artifacts"
-	@echo "  run-server    - Run server (requires sudo)"
-	@echo "  run-client    - Run client (requires sudo)"
 	@echo "  run-mesh      - Run mesh node (requires sudo)"
 	@echo "  run-exit-node - Run mesh exit node (requires sudo)"
 	@echo "  help          - Show this help"

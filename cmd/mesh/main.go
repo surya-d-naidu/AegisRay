@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aegisray/vpn-tunnel/internal/config"
-	"github.com/aegisray/vpn-tunnel/internal/mesh"
 	"github.com/sirupsen/logrus"
+	"github.com/surya-d-naidu/AegisRay/internal/config"
+	"github.com/surya-d-naidu/AegisRay/internal/mesh"
 )
 
 var (

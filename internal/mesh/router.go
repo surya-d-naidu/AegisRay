@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aegisray/vpn-tunnel/internal/crypto"
-	pb "github.com/aegisray/vpn-tunnel/proto/mesh"
 	"github.com/sirupsen/logrus"
+	"github.com/surya-d-naidu/AegisRay/internal/crypto"
+	pb "github.com/surya-d-naidu/AegisRay/proto/mesh"
 )
 
 // MeshRouter handles packet routing through the P2P mesh network

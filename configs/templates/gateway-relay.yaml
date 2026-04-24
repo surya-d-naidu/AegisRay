@@ -20,6 +20,8 @@ accept_routes: true          # Learn routes from others
 # Security
 use_tls: true
 stealth_mode: true           # Can be disabled if your firewall allows UDP explicitly
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
 
 # System
 enable_tun: false            # Set false if this is PURE relay (save resources)

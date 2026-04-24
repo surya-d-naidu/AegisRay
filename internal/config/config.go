@@ -10,16 +10,16 @@ import (
 // ServerConfig holds server configuration
 type ServerConfig struct {
 	Server struct {
-		Host        string `yaml:"host"`
-		Port        int    `yaml:"port"`
-		CertFile    string `yaml:"cert_file"`
-		KeyFile     string `yaml:"key_file"`
-		LogLevel    string `yaml:"log_level"`
-		MaxClients  int    `yaml:"max_clients"`
-		UseTLS      bool   `yaml:"use_tls"`
-		AutoCert    bool   `yaml:"auto_cert"`
+		Host       string `yaml:"host"`
+		Port       int    `yaml:"port"`
+		CertFile   string `yaml:"cert_file"`
+		KeyFile    string `yaml:"key_file"`
+		LogLevel   string `yaml:"log_level"`
+		MaxClients int    `yaml:"max_clients"`
+		UseTLS     bool   `yaml:"use_tls"`
+		AutoCert   bool   `yaml:"auto_cert"`
 	} `yaml:"server"`
-	
+
 	Network struct {
 		InterfaceName string   `yaml:"interface_name"`
 		DNSServers    []string `yaml:"dns_servers"`
@@ -36,14 +36,14 @@ type ClientConfig struct {
 		UseTLS   bool   `yaml:"use_tls"`
 		LogLevel string `yaml:"log_level"`
 	} `yaml:"server"`
-	
+
 	Tunnel struct {
 		InterfaceName string   `yaml:"interface_name"`
 		LocalIP       string   `yaml:"local_ip"`
 		DNSServers    []string `yaml:"dns_servers"`
 		Routes        []string `yaml:"routes"`
 	} `yaml:"tunnel"`
-	
+
 	Client struct {
 		ID                string `yaml:"id"`
 		ReconnectInterval int    `yaml:"reconnect_interval"`
@@ -82,8 +82,10 @@ func LoadServerConfig(filename string) (*ServerConfig, error) {
 	if config.Server.KeyFile == "" {
 		config.Server.KeyFile = "certs/server.key"
 	}
-	// Default to TLS enabled for security
-	config.Server.UseTLS = true
+	// Preserve explicit config values while still defaulting autocert on.
+	if !config.Server.UseTLS && config.Server.CertFile == "" && config.Server.KeyFile == "" {
+		config.Server.UseTLS = true
+	}
 	config.Server.AutoCert = true
 
 	return &config, nil
@@ -123,8 +125,10 @@ func LoadClientConfig(filename string) (*ClientConfig, error) {
 	if config.Client.HeartbeatInterval == 0 {
 		config.Client.HeartbeatInterval = 30
 	}
-	// Default to TLS enabled for security
-	config.Server.UseTLS = true
+	// Preserve explicit config values while still defaulting to TLS when the setting is omitted.
+	if !config.Server.UseTLS && config.Server.Host == "" {
+		config.Server.UseTLS = true
+	}
 
 	return &config, nil
 }

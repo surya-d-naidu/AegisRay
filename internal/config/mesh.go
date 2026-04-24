@@ -13,11 +13,12 @@ import (
 // MeshConfig holds mesh network configuration
 type MeshConfig struct {
 	// Node Configuration
-	NodeName   string `yaml:"node_name"`
-	MeshIP     string `yaml:"mesh_ip"`
-	ListenPort int    `yaml:"listen_port"`
-	APIPort    int    `yaml:"api_port"`
-	LogLevel   string `yaml:"log_level"`
+	NodeName       string `yaml:"node_name"`
+	MeshIP         string `yaml:"mesh_ip"`
+	ListenPort     int    `yaml:"listen_port"`
+	APIPort        int    `yaml:"api_port"`
+	APIBindAddress string `yaml:"api_bind_address"`
+	LogLevel       string `yaml:"log_level"`
 
 	// Network Configuration
 	NetworkName string   `yaml:"network_name"`
@@ -25,11 +26,15 @@ type MeshConfig struct {
 	DNSServers  []string `yaml:"dns_servers"`
 
 	// Security Configuration
-	UseTLS          bool   `yaml:"use_tls"`
-	CertFile        string `yaml:"cert_file"`
-	KeyFile         string `yaml:"key_file"`
-	IdentityKeyFile string `yaml:"identity_key_file"`
-	PeerStoreFile   string `yaml:"peer_store_file"`
+	UseTLS                 bool     `yaml:"use_tls"`
+	CertFile               string   `yaml:"cert_file"`
+	KeyFile                string   `yaml:"key_file"`
+	IdentityKeyFile        string   `yaml:"identity_key_file"`
+	PeerStoreFile          string   `yaml:"peer_store_file"`
+	TrustRootPublicKeyFile string   `yaml:"trust_root_public_key_file"`
+	AuthorizedPeersFile    string   `yaml:"authorized_peers_file"`
+	AuthorizedPeerKeys     []string `yaml:"authorized_peer_keys"`
+	AllowUnauthenticated   bool     `yaml:"allow_unauthenticated_peers"`
 
 	// Stealth Configuration
 	StealthMode    bool     `yaml:"stealth_mode"`
@@ -114,6 +119,10 @@ func setMeshConfigDefaults(config *MeshConfig) error {
 		config.APIPort = 8080 // Default HTTP API port
 	}
 
+	if config.APIBindAddress == "" {
+		config.APIBindAddress = "127.0.0.1"
+	}
+
 	if config.LogLevel == "" {
 		config.LogLevel = "info"
 	}
@@ -177,6 +186,10 @@ func setMeshConfigDefaults(config *MeshConfig) error {
 	// Accept routes by default
 	config.AcceptRoutes = true
 
+	// Production default: require an explicit authorization source unless the
+	// operator knowingly opts into unauthenticated lab mode.
+	config.AllowUnauthenticated = false
+
 	return nil
 }
 
@@ -225,6 +238,13 @@ func validateMeshConfig(config *MeshConfig) error {
 	// Validate MTU
 	if config.MTU < 576 || config.MTU > 9000 {
 		return fmt.Errorf("invalid MTU: %d (must be between 576 and 9000)", config.MTU)
+	}
+
+	if (config.TrustRootPublicKeyFile == "") != (config.AuthorizedPeersFile == "") {
+		return fmt.Errorf("trust_root_public_key_file and authorized_peers_file must be set together")
+	}
+	if config.AllowUnauthenticated && (config.TrustRootPublicKeyFile != "" || config.AuthorizedPeersFile != "" || len(config.AuthorizedPeerKeys) > 0) {
+		return fmt.Errorf("allow_unauthenticated_peers cannot be combined with authorization settings")
 	}
 
 	return nil

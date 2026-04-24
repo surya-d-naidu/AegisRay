@@ -1,8 +1,8 @@
 package certs
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -15,24 +15,24 @@ import (
 	"time"
 )
 
-// CertificateManager manages TLS certificates for AegisRay
+// CertificateManager manages TLS certificates for AegisRay.
+// The mesh identity key is reused for TLS so the transport and application identity match.
 type CertificateManager struct {
 	certPath    string
 	keyPath     string
+	identityKey ed25519.PrivateKey
 	certificate *tls.Certificate
 }
 
-// NewCertificateManager creates a new certificate manager
-func NewCertificateManager(certPath, keyPath string) *CertificateManager {
+func NewCertificateManager(certPath, keyPath string, identityKey ed25519.PrivateKey) *CertificateManager {
 	return &CertificateManager{
-		certPath: certPath,
-		keyPath:  keyPath,
+		certPath:    certPath,
+		keyPath:     keyPath,
+		identityKey: identityKey,
 	}
 }
 
-// LoadOrGenerateCertificate loads existing certificate or generates a new one
 func (cm *CertificateManager) LoadOrGenerateCertificate(hosts []string) (*tls.Certificate, error) {
-	// Try to load existing certificate
 	if cm.certExists() {
 		cert, err := cm.loadCertificate()
 		if err == nil && cm.isValidCertificate(cert, hosts) {
@@ -41,7 +41,6 @@ func (cm *CertificateManager) LoadOrGenerateCertificate(hosts []string) (*tls.Ce
 		}
 	}
 
-	// Generate new certificate
 	cert, err := cm.generateCertificate(hosts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate certificate: %w", err)
@@ -51,14 +50,12 @@ func (cm *CertificateManager) LoadOrGenerateCertificate(hosts []string) (*tls.Ce
 	return cert, nil
 }
 
-// certExists checks if certificate files exist
 func (cm *CertificateManager) certExists() bool {
 	_, certErr := os.Stat(cm.certPath)
 	_, keyErr := os.Stat(cm.keyPath)
 	return certErr == nil && keyErr == nil
 }
 
-// loadCertificate loads certificate from files
 func (cm *CertificateManager) loadCertificate() (*tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(cm.certPath, cm.keyPath)
 	if err != nil {
@@ -67,7 +64,6 @@ func (cm *CertificateManager) loadCertificate() (*tls.Certificate, error) {
 	return &cert, nil
 }
 
-// isValidCertificate checks if certificate is valid for the given hosts
 func (cm *CertificateManager) isValidCertificate(cert *tls.Certificate, hosts []string) bool {
 	if len(cert.Certificate) == 0 {
 		return false
@@ -78,14 +74,22 @@ func (cm *CertificateManager) isValidCertificate(cert *tls.Certificate, hosts []
 		return false
 	}
 
-	// Check if certificate is expired or will expire soon
-	if time.Until(x509Cert.NotAfter) < 24*time.Hour {
+	if err := ValidatePeerCertificate(x509Cert); err != nil {
 		return false
 	}
 
-	// Check if all hosts are covered
 	for _, host := range hosts {
 		if err := x509Cert.VerifyHostname(host); err != nil {
+			return false
+		}
+	}
+
+	if len(cm.identityKey) > 0 {
+		certPubKey, ok := x509Cert.PublicKey.(ed25519.PublicKey)
+		if !ok {
+			return false
+		}
+		if !certPubKey.Equal(cm.identityKey.Public()) {
 			return false
 		}
 	}
@@ -93,34 +97,30 @@ func (cm *CertificateManager) isValidCertificate(cert *tls.Certificate, hosts []
 	return true
 }
 
-// generateCertificate generates a new self-signed certificate
 func (cm *CertificateManager) generateCertificate(hosts []string) (*tls.Certificate, error) {
-	// Generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate private key: %w", err)
+	if len(cm.identityKey) == 0 {
+		_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate Ed25519 TLS key: %w", err)
+		}
+		cm.identityKey = privateKey
 	}
 
-	// Create certificate template
 	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject: pkix.Name{
-			Organization:  []string{"AegisRay VPN"},
-			Country:       []string{"US"},
-			Province:      []string{""},
-			Locality:      []string{"San Francisco"},
-			StreetAddress: []string{""},
-			PostalCode:    []string{""},
+			Organization: []string{"AegisRay Mesh"},
+			CommonName:   "AegisRay Mesh Node",
 		},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour), // Valid for 1 year
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:  []net.IP{},
-		DNSNames:     []string{},
+		NotBefore:             time.Now().Add(-5 * time.Minute),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{},
+		IPAddresses:           []net.IP{},
 	}
 
-	// Add hosts to certificate
 	for _, host := range hosts {
 		if ip := net.ParseIP(host); ip != nil {
 			template.IPAddresses = append(template.IPAddresses, ip)
@@ -129,50 +129,29 @@ func (cm *CertificateManager) generateCertificate(hosts []string) (*tls.Certific
 		}
 	}
 
-	// Add common fake domains for better disguise
-	fakeDomains := []string{
-		"cloudflare.com",
-		"*.cloudflare.com",
-		"github.com",
-		"*.github.com",
-		"google.com",
-		"*.google.com",
-		"microsoft.com",
-		"*.microsoft.com",
-		"amazon.com",
-		"*.amazon.com",
-	}
-	template.DNSNames = append(template.DNSNames, fakeDomains...)
-
-	// Generate certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, cm.identityKey.Public(), cm.identityKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create certificate: %w", err)
 	}
 
-	// Save certificate to file
-	if err := cm.saveCertificate(certDER, privateKey); err != nil {
+	if err := cm.saveCertificate(certDER, cm.identityKey); err != nil {
 		return nil, fmt.Errorf("failed to save certificate: %w", err)
 	}
 
-	// Create TLS certificate
 	cert := tls.Certificate{
 		Certificate: [][]byte{certDER},
-		PrivateKey:  privateKey,
+		PrivateKey:  cm.identityKey,
 	}
 
 	return &cert, nil
 }
 
-// saveCertificate saves certificate and private key to files
-func (cm *CertificateManager) saveCertificate(certDER []byte, privateKey *rsa.PrivateKey) error {
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(filepath.Dir(cm.certPath), 0755); err != nil {
+func (cm *CertificateManager) saveCertificate(certDER []byte, identityKey ed25519.PrivateKey) error {
+	if err := os.MkdirAll(filepath.Dir(cm.certPath), 0700); err != nil {
 		return err
 	}
 
-	// Save certificate
-	certOut, err := os.Create(cm.certPath)
+	certOut, err := os.OpenFile(cm.certPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -182,14 +161,13 @@ func (cm *CertificateManager) saveCertificate(certDER []byte, privateKey *rsa.Pr
 		return err
 	}
 
-	// Save private key
-	keyOut, err := os.Create(cm.keyPath)
+	keyOut, err := os.OpenFile(cm.keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
 	defer keyOut.Close()
 
-	privKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	privKeyBytes, err := x509.MarshalPKCS8PrivateKey(identityKey)
 	if err != nil {
 		return err
 	}
@@ -197,48 +175,60 @@ func (cm *CertificateManager) saveCertificate(certDER []byte, privateKey *rsa.Pr
 	return pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privKeyBytes})
 }
 
-// GetTLSConfig returns TLS configuration for server
+// ValidatePeerCertificate performs explicit certificate validation for self-signed mesh peers.
+func ValidatePeerCertificate(cert *x509.Certificate) error {
+	if cert == nil {
+		return fmt.Errorf("missing peer certificate")
+	}
+	if time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
+		return fmt.Errorf("peer certificate is expired or not yet valid")
+	}
+	if err := cert.CheckSignature(cert.SignatureAlgorithm, cert.RawTBSCertificate, cert.Signature); err != nil {
+		return fmt.Errorf("peer certificate is not self-signed correctly: %w", err)
+	}
+	if _, ok := cert.PublicKey.(ed25519.PublicKey); !ok {
+		return fmt.Errorf("peer certificate must use Ed25519")
+	}
+	return nil
+}
+
 func (cm *CertificateManager) GetServerTLSConfig() *tls.Config {
 	return &tls.Config{
 		Certificates: []tls.Certificate{*cm.certificate},
-		ServerName:   "", // Allow any SNI
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
+		ClientAuth:   tls.RequireAnyClientCert,
+		MinVersion:   tls.VersionTLS13,
 	}
 }
 
-// GetClientTLSConfig returns TLS configuration for client with fake SNI
-func (cm *CertificateManager) GetClientTLSConfig(serverName, fakeSNI string) *tls.Config {
+func (cm *CertificateManager) GetClientTLSConfig(_ string, fakeSNI string) *tls.Config {
 	return &tls.Config{
-		ServerName:         fakeSNI, // Use fake SNI for handshake
-		InsecureSkipVerify: true,    // Skip verification since we're using fake SNI
-		MinVersion:         tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		Certificates:       []tls.Certificate{*cm.certificate},
+		ServerName:         fakeSNI,
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS13,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return fmt.Errorf("missing peer certificate")
+			}
+			return ValidatePeerCertificate(cs.PeerCertificates[0])
 		},
 	}
 }
 
-// CreateCustomDialer creates a custom dialer that handles SNI masquerading
+func (cm *CertificateManager) GetTLSCertificate() tls.Certificate {
+	return *cm.certificate
+}
+
 func (cm *CertificateManager) CreateCustomDialer(realHost, fakeSNI string) func(string, string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
-		// Always connect to the real server address
+	return func(network, _ string) (net.Conn, error) {
 		conn, err := net.Dial(network, realHost)
 		if err != nil {
 			return nil, err
 		}
 
-		// Wrap with TLS using fake SNI
 		tlsConfig := cm.GetClientTLSConfig(realHost, fakeSNI)
 		tlsConn := tls.Client(conn, tlsConfig)
 
-		// Perform handshake with fake SNI
 		if err := tlsConn.Handshake(); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("TLS handshake failed with SNI %s: %w", fakeSNI, err)
@@ -248,7 +238,6 @@ func (cm *CertificateManager) CreateCustomDialer(realHost, fakeSNI string) func(
 	}
 }
 
-// GetCertificateInfo returns information about the loaded certificate
 func (cm *CertificateManager) GetCertificateInfo() (*CertificateInfo, error) {
 	if cm.certificate == nil || len(cm.certificate.Certificate) == 0 {
 		return nil, fmt.Errorf("no certificate loaded")
@@ -260,17 +249,16 @@ func (cm *CertificateManager) GetCertificateInfo() (*CertificateInfo, error) {
 	}
 
 	return &CertificateInfo{
-		Subject:     x509Cert.Subject.String(),
-		Issuer:      x509Cert.Issuer.String(),
-		NotBefore:   x509Cert.NotBefore,
-		NotAfter:    x509Cert.NotAfter,
-		DNSNames:    x509Cert.DNSNames,
-		IPAddresses: x509Cert.IPAddresses,
+		Subject:      x509Cert.Subject.String(),
+		Issuer:       x509Cert.Issuer.String(),
+		NotBefore:    x509Cert.NotBefore,
+		NotAfter:     x509Cert.NotAfter,
+		DNSNames:     x509Cert.DNSNames,
+		IPAddresses:  x509Cert.IPAddresses,
 		SerialNumber: x509Cert.SerialNumber.String(),
 	}, nil
 }
 
-// CertificateInfo contains information about a certificate
 type CertificateInfo struct {
 	Subject      string
 	Issuer       string
@@ -281,7 +269,6 @@ type CertificateInfo struct {
 	SerialNumber string
 }
 
-// String returns a formatted string representation of certificate info
 func (ci *CertificateInfo) String() string {
 	return fmt.Sprintf(`Certificate Information:
   Subject: %s

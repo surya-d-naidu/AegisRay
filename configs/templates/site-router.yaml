@@ -11,6 +11,12 @@ mesh_ip: "100.64.0.5"
 listen_port: 51820
 network_name: "aegis-corp"
 
+# Security
+use_tls: true
+stealth_mode: true
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
+
 # Route Advertising
 advertise_routes:
   - "192.168.1.0/24"         # The LAN subnet we are exposing

@@ -1,4 +1,4 @@
-module github.com/aegisray/vpn-tunnel
+module github.com/surya-d-naidu/AegisRay
 
 go 1.24.0
 

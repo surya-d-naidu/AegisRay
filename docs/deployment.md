@@ -77,6 +77,33 @@ sudo systemctl enable --now aegisray
 sudo systemctl status aegisray
 ```
 
+## 🔐 Production Admission Control
+
+Do not deploy an Internet-facing node with only the template defaults. Production nodes must include one of:
+
+```yaml
+trust_root_public_key_file: /etc/aegisray/trust-root.pem
+authorized_peers_file: /etc/aegisray/authorized-peers.json
+```
+
+or a small pinned-key allowlist:
+
+```yaml
+authorized_peer_keys:
+  - |
+    -----BEGIN PUBLIC KEY-----
+    ...
+    -----END PUBLIC KEY-----
+```
+
+`allow_unauthenticated_peers: true` is reserved for local simulations and lab use.
+
+## 🥷 Stealth Notes
+
+When `use_tls: true` and `stealth_mode: true` are enabled, outbound peer dials use SNI masquerading so the TLS handshake presents a common HTTPS hostname from `stealth_domains`.
+
+That improves stealth during connection setup, but it is not a universal bypass. Packet timing, flow shape, and destination patterns can still be analyzed by a capable observer.
+
 ---
 
 ## 📱 3. Tuning & Optimization

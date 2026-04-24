@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aegisray/vpn-tunnel/internal/config"
+	"github.com/surya-d-naidu/AegisRay/internal/config"
 )
 
 // getFreePort returns a free port for testing
@@ -43,6 +43,7 @@ func TestMeshIntegration_Handshake(t *testing.T) {
 		UseTLS:          false,
 		AutoDiscovery:   true,
 		IdentityKeyFile: "", // Ephemeral
+		AllowUnauthenticated: true,
 	}
 
 	node1, err := NewMeshNode(cfg1)
@@ -68,6 +69,7 @@ func TestMeshIntegration_Handshake(t *testing.T) {
 		UseTLS:          false,
 		AutoDiscovery:   true,
 		IdentityKeyFile: "",
+		AllowUnauthenticated: true,
 		StaticPeers:     []string{fmt.Sprintf("127.0.0.1:%d", port1)}, // Node 2 calls Node 1
 	}
 

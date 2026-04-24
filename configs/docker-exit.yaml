@@ -11,5 +11,6 @@ use_tls: true
 exit_node: true
 stealth_mode: true
 stealth_domains: ["google.com", "microsoft.com"]
+allow_unauthenticated_peers: true
 advertise_routes:
   - "0.0.0.0/0"

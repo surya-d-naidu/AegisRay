@@ -9,3 +9,4 @@ auto_discovery: true
 enable_tun: true
 tun_interface_name: aegis0
 use_tls: false
+allow_unauthenticated_peers: true

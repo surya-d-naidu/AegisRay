@@ -330,7 +330,7 @@ class MeshTester:
         try:
             # Execute ping command in source container
             result = subprocess.run(
-                ['docker', 'exec', f"aegisray-{source}-1", 'ping', '-c', '1', target],
+                ['docker', 'exec', f"sim-{source}", 'ping', '-c', '1', target],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
@@ -345,15 +345,14 @@ class MeshTester:
         return None
 
     async def _test_http_through_node(self, client: str, exit_node: str) -> Optional[float]:
-        """Test HTTP request through specific exit node"""
+        """Test HTTP request to an internal mesh node's /health endpoint"""
         try:
-            start_time = time.time()
             result = subprocess.run([
-                'docker', 'exec', f"aegisray-{client}-1", 
+                'docker', 'exec', f"sim-{client}",
                 'curl', '-s', '-w', '%{time_total}', '-o', '/dev/null',
-                'http://httpbin.org/ip'
+                f'http://{exit_node}:8080/health'
             ], capture_output=True, text=True, timeout=30)
-            
+
             if result.returncode == 0:
                 return float(result.stdout) * 1000  # Convert to ms
         except:
@@ -374,14 +373,13 @@ class MeshTester:
         return True
 
     async def _measure_throughput(self, node: str) -> float:
-        """Measure network throughput for a node"""
+        """Measure network throughput against internal iperf3 server"""
         try:
-            # Run iperf3 test
             result = subprocess.run([
-                'docker', 'exec', f"aegisray-{node}-1",
-                'iperf3', '-c', 'iperf.he.net', '-t', '10', '-J'
+                'docker', 'exec', f"sim-{node}",
+                'iperf3', '-c', 'iperf3-server', '-t', '5', '-J'
             ], capture_output=True, text=True, timeout=30)
-            
+
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 return data['end']['sum_received']['bits_per_second'] / 1000000  # Mbps

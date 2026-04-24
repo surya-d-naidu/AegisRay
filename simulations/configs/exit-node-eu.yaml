@@ -9,14 +9,13 @@ log_level: "debug"
 # Network Configuration
 network_name: "sim-network"
 network_cidr: "100.64.0.0/16"
-dns_servers:
-  - "1.1.1.1"
-  - "8.8.8.8"
+dns_servers: []                    # Air-gapped: no external DNS
 
 # Security Configuration
 use_tls: true
 cert_file: "/app/certs/server.crt"
 key_file: "/app/certs/server.key"
+allow_unauthenticated_peers: true
 
 # Stealth Configuration
 stealth_mode: true

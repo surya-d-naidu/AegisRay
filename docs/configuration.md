@@ -27,9 +27,11 @@ network_cidr: "100.64.0.0/16"
 
 # Security
 use_tls: true
-stealth_mode: true           # Hide traffic as HTTPS
+stealth_mode: true           # Use SNI masquerading on TLS handshakes
 stealth_domains:
   - "cloudflare.com"
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
 
 # Discovery
 auto_discovery: true
@@ -105,9 +107,13 @@ mesh_routing: true
 ### Stealth & Security
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `use_tls` | bool | **Required** for stealth. Wraps packets in TLS. |
-| `stealth_mode` | bool | Masquerades Handshakes as HTTPS traffic. |
+| `use_tls` | bool | **Required** for SNI masquerading and production peer identity binding. |
+| `stealth_mode` | bool | Enables SNI masquerading on outbound TLS handshakes. |
 | `stealth_domains` | list | Domains to spoof in SNI (e.g., google.com). |
+| `trust_root_public_key_file` | string | PEM file for the signing key that vouches for your authorized peer bundle. |
+| `authorized_peers_file` | string | Signed JSON bundle listing peers allowed to join the mesh. |
+| `authorized_peer_keys` | list | Directly pinned PEM public keys for small meshes. |
+| `allow_unauthenticated_peers` | bool | Lab-only override. Disables zero-trust admission when set to `true`. |
 
 ### Connectivity
 | Field | Type | Description |
@@ -115,6 +121,35 @@ mesh_routing: true
 | `static_peers` | list | `IP:Port` of known nodes to bootstrap connection. |
 | `stun_servers` | list | Custom STUN servers for NAT detection. |
 | `upnp_enabled` | bool | Attempt to open ports on home routers automatically. |
+
+## 🔒 Production Requirement
+
+By default, AegisRay now fails closed if you do not configure an authorization source. For production, set either:
+
+```yaml
+trust_root_public_key_file: "/etc/aegisray/trust-root.pem"
+authorized_peers_file: "/etc/aegisray/authorized-peers.json"
+```
+
+or:
+
+```yaml
+authorized_peer_keys:
+  - |
+    -----BEGIN PUBLIC KEY-----
+    ...
+    -----END PUBLIC KEY-----
+```
+
+If you are only doing local experiments, you can opt out explicitly:
+
+```yaml
+allow_unauthenticated_peers: true
+```
+
+That flag is not recommended for Internet-facing or shared environments.
+
+For the operator workflow to generate and sign those files, see [docs/trust.md](trust.md).
 
 ### Advanced Routing
 | Field | Type | Description |
