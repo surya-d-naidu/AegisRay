@@ -19,7 +19,6 @@ service MeshService {
     
     // Data transmission
     rpc SendPacket(PacketRequest) returns (PacketResponse);
-    rpc StreamPackets(stream StreamPacket) returns (stream StreamPacket);
     
     // Route management
     rpc AdvertiseRoutes(RouteAdvertisement) returns (RouteResponse);
@@ -123,14 +122,6 @@ message PacketResponse {
     bytes response_data = 3;
     google.protobuf.Timestamp timestamp = 4;
     string error = 5;
-}
-
-message StreamPacket {
-    string session_id = 1;
-    bytes data = 2;
-    uint32 sequence = 3;
-    bool is_control = 4;
-    PacketMetadata metadata = 5;
 }
 
 // Route management messages

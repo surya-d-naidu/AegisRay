@@ -1517,52 +1517,6 @@ func (n *MeshNode) SendPacket(ctx context.Context, req *pb.PacketRequest) (*pb.P
 	}, nil
 }
 
-func (n *MeshNode) StreamPackets(stream pb.MeshService_StreamPacketsServer) error {
-	return status.Error(codes.Unimplemented, "StreamPackets is disabled until session authentication and routing metadata are implemented")
-}
-
-func (n *MeshNode) processStreamPacket(sp *pb.StreamPacket) {
-	if sp.IsControl {
-		// Handle control messages (ping/pong, etc)
-		return
-	}
-
-	// Convert StreamPacket to MeshPacket
-	// Note: StreamPacket in proto definition (lines 127-133) doesn't have Source/Dest fields directly?
-	// Wait, looking at proto:
-	// message StreamPacket { string session_id = 1; bytes data = 2; uint32 sequence = 3; bool is_control = 4; PacketMetadata metadata = 5; }
-	// It seems missing Source/Dest IDs which are critical for routing.
-	// The standard PacketRequest (line 108) has them.
-	// We must assume the 'data' payload IS the MeshPacket (serialized) OR the proto design implies point-to-point.
-	// Attempting to deserialize 'data' as MeshPacket or assuming point-to-point to THIS node?
-	// If it's a mesh, it needs routing info.
-	// Let's assume 'data' contains the encrypted payload including headers, OR
-	// we need to inspect the 'metadata' path.
-
-	// For this implementation, we'll wrap the data into a MeshPacket assuming it's destined for US if not specified,
-	// or we'd need to peek inside.
-	// However, looking at PacketRequest, it has Source/Dest. StreamPacket is minimized.
-	// Let's assume StreamPacket is for point-to-point tunnel data between neighbor peers.
-
-	meshPacket := &MeshPacket{
-		// Source is the connected peer
-		// Dest is unknown without parsing 'data' or having headers.
-		// THIS IS A LIMITATION OF THE CURRENT PROTO DEFINITION.
-		// We will assume the payload describes the destination or it's for us.
-		PacketType: DataPacket,
-		Payload:    sp.Data,
-		Encrypted:  true,
-		Timestamp:  time.Now(),
-	}
-
-	// Send to Router
-	// The router expects SourceID/DestID.
-	// We might need to decrypt to find out, or the proto needs update.
-	// Proceeding with "Best Effort" routing (assuming local delivery)
-
-	n.handleDataPacket(meshPacket)
-}
-
 func (n *MeshNode) AdvertiseRoutes(ctx context.Context, req *pb.RouteAdvertisement) (*pb.RouteResponse, error) {
 	if err := n.verifyEstablishedPeerIdentity(ctx, req.NodeId); err != nil {
 		return &pb.RouteResponse{Success: false, Error: err.Error()}, nil

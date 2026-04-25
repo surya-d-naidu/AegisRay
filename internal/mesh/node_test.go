@@ -13,11 +13,8 @@ import (
 	"github.com/surya-d-naidu/AegisRay/internal/config"
 	"github.com/surya-d-naidu/AegisRay/internal/crypto"
 	pb "github.com/surya-d-naidu/AegisRay/proto/mesh"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -182,15 +179,6 @@ func TestRequestIntroductionRejectsTargetWithoutEndpoint(t *testing.T) {
 	}
 }
 
-func TestStreamPacketsReturnsUnimplemented(t *testing.T) {
-	node := newTLSMeshNodeForTest(t)
-
-	err := node.StreamPackets(testStreamPacketsServer{ctx: context.Background()})
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("expected unimplemented status, got %v", err)
-	}
-}
-
 func newTLSMeshNodeForTest(t *testing.T) *MeshNode {
 	t.Helper()
 
@@ -261,39 +249,4 @@ func testPeerContext(t *testing.T) (context.Context, string, string) {
 	})
 
 	return ctx, nodeID, string(publicKey)
-}
-
-type testStreamPacketsServer struct {
-	pb.MeshService_StreamPacketsServer
-	ctx context.Context
-}
-
-func (s testStreamPacketsServer) Context() context.Context {
-	return s.ctx
-}
-
-func (s testStreamPacketsServer) Send(*pb.StreamPacket) error {
-	return nil
-}
-
-func (s testStreamPacketsServer) Recv() (*pb.StreamPacket, error) {
-	return nil, nil
-}
-
-func (s testStreamPacketsServer) SendHeader(metadata.MD) error {
-	return nil
-}
-
-func (s testStreamPacketsServer) SetHeader(metadata.MD) error {
-	return nil
-}
-
-func (s testStreamPacketsServer) SetTrailer(metadata.MD) {}
-
-func (s testStreamPacketsServer) SendMsg(any) error {
-	return nil
-}
-
-func (s testStreamPacketsServer) RecvMsg(any) error {
-	return nil
 }
