@@ -58,8 +58,6 @@ The active gRPC RPCs are:
 - `InitiateHolePunch`
 - `ExchangeConnectionInfo`
 
-`StreamPackets` remains defined in the proto but is intentionally disabled until authenticated session routing metadata is implemented correctly.
-
 ### 2.5 Data Plane
 
 - **Active Path**: `SendPacket`
@@ -149,6 +147,5 @@ Responsibilities:
 
 ## 5. Current Gaps
 
-- `StreamPackets` is intentionally disabled and should either be finished or removed from the public interface.
 - Full production confidence still requires live validation of NAT traversal, exit-node routing, throughput, and recovery.
 - Trust bundle distribution and reload behavior still need operational discipline in deployment.
